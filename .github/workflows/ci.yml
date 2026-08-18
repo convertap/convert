@@ -166,5 +166,7 @@ jobs:
         if: steps.web.outputs.ready == 'yes'
         run: |
           pnpm install --frozen-lockfile
-          pnpm --filter @convert/web build
+          # turbo builds the workspace packages first; next build type-checks against
+          # their declarations, so a filtered build alone fails on a clean checkout.
+          pnpm build
           pnpm dlx @lhci/cli autorun --config=./lighthouserc.json
