@@ -1,0 +1,91 @@
+{
+  "$comment": [
+    "Machine-readable form of the layering in docs/architecture.md §5, for the",
+    "Next.js + NestJS (Fastify) topology decided in ADR 0001.",
+    "Enforced by tools/check_boundaries.py, which runs in CI before lint or tests.",
+    "Internal imports are recognised two ways: the workspace alias '@convert/<layer>'",
+    "and any path containing 'packages/<layer>/'.",
+    "Change this file only in the same commit as an ADR that changes the layering."
+  ],
+  "aliasPrefix": "@convert/",
+  "layers": {
+    "contracts": {
+      "path": "packages/contracts",
+      "purpose": "Shared DTOs, error envelope, ULID helpers, pagination cursors. The only package both web and api may import. Depends on nothing.",
+      "mayImport": [],
+      "forbiddenExternals": ["next", "react", "@nestjs/common", "@nestjs/core", "drizzle-orm", "prisma", "pg"]
+    },
+    "core": {
+      "path": "packages/core",
+      "purpose": "Framework-free domain logic, entities, and ports. Invariants I1-I12 live here. No decorators, no ORM, no HTTP.",
+      "mayImport": ["contracts"],
+      "forbiddenExternals": [
+        "next", "react", "react-dom",
+        "@nestjs/common", "@nestjs/core", "@nestjs/platform-fastify", "fastify",
+        "express", "hono",
+        "drizzle-orm", "prisma", "@prisma/client", "typeorm", "sequelize", "mongoose",
+        "pg", "postgres", "mysql2", "redis", "ioredis", "bullmq", "pg-boss",
+        "axios", "node-fetch", "undici",
+        "twilio", "whatsapp-web.js", "@whiskeysockets/baileys"
+      ]
+    },
+    "application": {
+      "path": "packages/application",
+      "purpose": "Use cases. Takes a Principal, enforces authorization and entitlements, writes activity rows. Shared by api and worker, so it must stay framework-free.",
+      "mayImport": ["core", "contracts"],
+      "forbiddenExternals": [
+        "next", "react", "react-dom",
+        "@nestjs/common", "@nestjs/core", "@nestjs/platform-fastify", "fastify", "express",
+        "drizzle-orm", "prisma", "@prisma/client", "pg", "postgres", "bullmq", "pg-boss"
+      ]
+    },
+    "infra": {
+      "path": "packages/infra",
+      "purpose": "Adapters that implement core ports: repositories, migrations, WhatsApp/SMS providers, queue, observability.",
+      "mayImport": ["core", "contracts"],
+      "forbiddenExternals": ["next", "react", "react-dom"]
+    },
+    "api": {
+      "path": "apps/api",
+      "purpose": "NestJS on the Fastify adapter. HTTP interface, webhook ingress, principal resolution, and later the Pro-tier public API. Thin: controllers call use cases.",
+      "mayImport": ["application", "core", "contracts"],
+      "forbiddenExternals": ["next", "react", "react-dom"]
+    },
+    "worker": {
+      "path": "apps/worker",
+      "purpose": "NestJS standalone application context. Campaign sends, reminder sweeps, provider event processing, read-model refresh.",
+      "mayImport": ["application", "core", "contracts"],
+      "forbiddenExternals": ["next", "react", "react-dom"]
+    },
+    "web": {
+      "path": "apps/web",
+      "purpose": "Next.js App Router. UI plus BFF route handlers that hold the session and call the API server-side. Knows DTOs, never domain logic.",
+      "mayImport": ["contracts"],
+      "forbiddenExternals": [
+        "@nestjs/common", "@nestjs/core", "@nestjs/platform-fastify", "fastify",
+        "drizzle-orm", "prisma", "@prisma/client", "pg", "postgres", "bullmq", "pg-boss"
+      ]
+    }
+  },
+  "compositionRoots": {
+    "$comment": "Only these files may wire infra implementations into a runtime. Everything else receives ports by injection. Keeps the swap in ADR 0005 to one directory.",
+    "globs": [
+      "apps/api/src/composition/**",
+      "apps/api/src/main.*",
+      "apps/worker/src/composition/**",
+      "apps/worker/src/main.*",
+      "tests/**"
+    ],
+    "mayAlsoImport": ["infra"]
+  },
+  "ignore": [
+    "node_modules/**",
+    ".git/**",
+    ".codex-review/**",
+    "dist/**",
+    "build/**",
+    ".next/**",
+    "coverage/**",
+    "**/*.d.ts"
+  ]
+}

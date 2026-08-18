@@ -242,8 +242,16 @@ None of these block the MVP build — no billing is in MVP scope — but all blo
 - **Ad-spend input.** Still open, deferred with cost-per-lead. Requires a decision on whether spend is pulled from Facebook/Instagram ad APIs or entered manually. Offline channels named in the problem (flyers, radio, referrals, walk-ins) have no API and need manual entry to appear in ROI at all.
 - **Attribution model.** Still open: first-touch, last-touch, or multi-touch, and how a walk-in acquires a source.
 
-### Not addressed by either document
-- **Data protection compliance.** Ghana Data Protection Act obligations for storing customer contact data and message history. Relevant from the first pilot, not later — pilot SMEs will upload real customer phone numbers.
+### Absent from the deck entirely
+
+Not gaps in this document — gaps in the pitch. Each is a question an investor or a partner will ask.
+
+- **Market sizing** — SME count, addressable segment, reachable segment.
+- **Named competitors and their pricing.** The deck argues against "US/EU tools" generically but names no local or regional incumbent.
+- **Unit economics** — CAC, payback period, gross margin per tier.
+- **Team and hiring plan.**
+- **Budget** for the 3-month Phase 1 build.
+- **Data protection compliance.** Ghana Data Protection Act obligations for storing customer contact data and message history. Relevant from the first pilot, not later — pilot SMEs will upload real customer phone numbers. Now tracked as checklist items L1–L4.
 
 ---
 
@@ -267,14 +275,6 @@ Where [`mvp-scope.md`](./mvp-scope.md) departs from the pitched product. Each di
 ### Net position
 
 The MVP validates the deck's **first claim** — one shared place to capture, assign, follow up, and close — and defers the **second** — visible marketing ROI per channel. The demo may validate the WhatsApp workflow using test/sandbox/temporary provider credentials, but that does not validate production WhatsApp approval, limits, or economics. That is the right sequencing for a 3-month pilot, but the ask on slide 12 and any pilot pitch should be worded to match, otherwise pilot SMEs expect ROI reporting and production-grade WhatsApp readiness that will not be there.
-
-### Not addressed in the deck at all
-- Market sizing (SME count, addressable segment, reachable segment).
-- Named competitors and their pricing — the deck argues against "US/EU tools" generically but does not name local or regional incumbents.
-- Unit economics: CAC, payback period, gross margin per tier.
-- Team and hiring plan.
-- Funding amount or budget for the 3-month Phase 1 build.
-- Data protection compliance (Ghana Data Protection Act) for storing customer contact data and message history.
 
 ---
 

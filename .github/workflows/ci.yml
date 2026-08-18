@@ -1,0 +1,176 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Gates G1-G9 from docs/engineering-guardrails.md §3.
+# Every job is written to pass on an empty repository and tighten automatically as
+# the code it guards lands. A pipeline that is red from day one gets disabled.
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guardrails:
+    name: G1-G2 boundaries and ADR discipline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # G1 - layer boundaries. No dependencies, runs in under a second.
+      - name: Check layer boundaries
+        run: python tools/check_boundaries.py
+
+      # G2 - a layering change must arrive with an ADR.
+      - name: Check ADR discipline
+        if: github.event_name == 'pull_request'
+        run: python tools/check_adr_discipline.py --base origin/${{ github.base_ref }}
+
+  quality:
+    name: G3-G6 types, lint, tests, invariants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect workspace
+        id: ws
+        run: echo "ready=$([ -f pnpm-lock.yaml ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@v4
+        if: steps.ws.outputs.ready == 'yes'
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        if: steps.ws.outputs.ready == 'yes'
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        if: steps.ws.outputs.ready == 'yes'
+        run: pnpm install --frozen-lockfile
+
+      - name: G3 type check
+        if: steps.ws.outputs.ready == 'yes'
+        run: pnpm -r typecheck
+
+      - name: G4 lint
+        if: steps.ws.outputs.ready == 'yes'
+        run: pnpm -r lint
+
+      - name: G5 unit tests
+        if: steps.ws.outputs.ready == 'yes'
+        run: pnpm -r test
+
+      # G6 - every invariant in architecture.md §6 has a test, built or not.
+      # G10 - the committed OpenAPI spec must match what the code generates.
+      # An API change is then a reviewable diff, not a surprise for a consumer.
+      - name: G10 OpenAPI spec is current
+        if: steps.ws.outputs.ready == 'yes' && hashFiles('apps/api/package.json') != ''
+        run: |
+          pnpm --filter @convert/api openapi:generate
+          git diff --exit-code -- apps/api/openapi.json \
+            || { echo "::error::openapi.json is stale. Run 'pnpm --filter @convert/api openapi:generate' and commit the result."; exit 1; }
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: G6 invariant coverage
+        run: python tools/check_invariant_coverage.py
+
+      # G13 - design token contrast. Palette regressions are silent otherwise, and
+      # this product is read outdoors on mid-range phones.
+      - name: G13 design token contrast
+        run: python tools/check_contrast.py
+
+  database:
+    name: G7-G8 migrations, RLS, integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: convert_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect migrations
+        id: mig
+        run: |
+          count=$(find packages/infra/src/db/migrations -type f 2>/dev/null | wc -l)
+          echo "ready=$([ "$count" -gt 0 ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@v4
+        if: steps.mig.outputs.ready == 'yes'
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        if: steps.mig.outputs.ready == 'yes'
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install
+        if: steps.mig.outputs.ready == 'yes'
+        run: pnpm install --frozen-lockfile
+
+      # G7 - migrations apply to an empty database, and every tenant table has RLS.
+      - name: G7 migrate and assert RLS
+        if: steps.mig.outputs.ready == 'yes'
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/convert_test
+        run: |
+          pnpm --filter @convert/infra migrate
+          pnpm --filter @convert/infra assert:rls
+
+      # G8 - integration tests against the real thing, never a mock database.
+      - name: G8 integration tests
+        if: steps.mig.outputs.ready == 'yes'
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/convert_test
+        run: pnpm test:integration
+
+  performance:
+    name: G9 mobile performance budget
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect web app
+        id: web
+        run: echo "ready=$([ -f apps/web/package.json ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@v4
+        if: steps.web.outputs.ready == 'yes'
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        if: steps.web.outputs.ready == 'yes'
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # G9 - budgets from docs/architecture.md §18, on a throttled mobile profile.
+      # Fails the build on regression; "mobile-first" is the product's differentiation claim.
+      - name: G9 Lighthouse budget
+        if: steps.web.outputs.ready == 'yes'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @convert/web build
+          pnpm dlx @lhci/cli autorun --config=./lighthouserc.json

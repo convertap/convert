@@ -1,0 +1,260 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --radius: 0.5rem;
+
+  --background: oklch(0.985 0.006 170);
+  --foreground: oklch(0.19 0.035 174);
+
+  --card: oklch(0.998 0.003 170);
+  --card-foreground: var(--foreground);
+  --popover: var(--card);
+  --popover-foreground: var(--foreground);
+
+  --primary: oklch(0.34 0.075 177);
+  --primary-foreground: oklch(0.985 0.006 170);
+  --secondary: oklch(0.91 0.025 165);
+  --secondary-foreground: oklch(0.24 0.05 174);
+  --muted: oklch(0.94 0.015 170);
+  --muted-foreground: oklch(0.46 0.035 176);
+  --accent: oklch(0.77 0.14 78);
+  --accent-foreground: oklch(0.22 0.04 74);
+
+  --destructive: oklch(0.58 0.19 26);
+  --destructive-foreground: oklch(0.985 0.006 170);
+  --success: oklch(0.57 0.13 150);
+  --success-foreground: oklch(0.985 0.006 170);
+  --warning: oklch(0.77 0.14 78);
+  --warning-foreground: oklch(0.22 0.04 74);
+
+  --border: oklch(0.812 0.018 172);
+  --input: oklch(0.812 0.018 172);
+  --ring: oklch(0.54 0.105 178);
+
+  --chart-1: oklch(0.48 0.11 178);
+  --chart-2: oklch(0.62 0.13 150);
+  --chart-3: oklch(0.77 0.14 78);
+  --chart-4: oklch(0.56 0.13 235);
+  --chart-5: oklch(0.6 0.16 28);
+
+  --sidebar: oklch(0.22 0.046 176);
+  --sidebar-foreground: oklch(0.96 0.01 170);
+  --sidebar-primary: oklch(0.7 0.13 170);
+  --sidebar-primary-foreground: oklch(0.16 0.034 176);
+  --sidebar-accent: oklch(0.3 0.055 176);
+  --sidebar-accent-foreground: oklch(0.96 0.01 170);
+  --sidebar-border: oklch(0.34 0.055 176);
+  --sidebar-ring: var(--ring);
+}
+
+.dark {
+  --background: oklch(0.16 0.034 176);
+  --foreground: oklch(0.96 0.01 170);
+
+  --card: oklch(0.2 0.038 176);
+  --card-foreground: var(--foreground);
+  --popover: var(--card);
+  --popover-foreground: var(--foreground);
+
+  --primary: oklch(0.727 0.13 170);
+  --primary-foreground: oklch(0.14 0.034 176);
+  --secondary: oklch(0.27 0.045 176);
+  --secondary-foreground: oklch(0.94 0.015 170);
+  --muted: oklch(0.25 0.04 176);
+  --muted-foreground: oklch(0.772 0.025 172);
+  --accent: oklch(0.78 0.15 78);
+  --accent-foreground: oklch(0.18 0.035 74);
+
+  --destructive: oklch(0.67 0.18 25);
+  --destructive-foreground: oklch(0.989 0.006 170);
+  --success: oklch(0.737 0.13 150);
+  --success-foreground: oklch(0.14 0.034 176);
+  --warning: oklch(0.78 0.15 78);
+  --warning-foreground: oklch(0.18 0.035 74);
+
+  --border: oklch(0.3 0.044 176);
+  --input: oklch(0.3 0.044 176);
+  --ring: oklch(0.67 0.13 170);
+
+  --chart-1: oklch(0.7 0.13 170);
+  --chart-2: oklch(0.68 0.13 150);
+  --chart-3: oklch(0.78 0.15 78);
+  --chart-4: oklch(0.7 0.1 235);
+  --chart-5: oklch(0.7 0.15 28);
+
+  --sidebar: oklch(0.13 0.03 176);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: oklch(0.22 0.04 176);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+}
+
+/* ---------------------------------------------------------------------------
+   Convert domain tokens
+
+   This is the part shadcn does not give us. The product surfaces four things
+   constantly - pipeline stage, lead source, message delivery state, and WhatsApp
+   conversation window - and without named tokens every component invents its own
+   colour for them, which is how a design system dies.
+
+   These are INDICATOR colours: dots, left borders, icons, and text on a neutral
+   surface. They are not badge fills. A filled badge uses --muted as its background
+   with the domain token as its text colour, so contrast stays predictable and we do
+   not need a foreground pair for every one of them.
+
+   Every token here is verified against --background by tools/check_contrast.py.
+--------------------------------------------------------------------------- */
+:root {
+  /* Pipeline stages. Hue AND lightness both vary, so the sequence survives
+     colour-blindness and a greyscale screenshot. */
+  --stage-new: oklch(0.52 0.03 250);
+  --stage-contacted: oklch(0.5 0.12 250);
+  --stage-qualified: oklch(0.46 0.1 185);
+  --stage-proposal: oklch(0.52 0.13 75);
+  --stage-won: oklch(0.47 0.13 150);
+  --stage-lost: oklch(0.52 0.14 20);
+
+  /* Lead sources. The three social channels keep recognisable brand hues because
+     reps scan for them; everything else stays in the product palette. */
+  --channel-whatsapp: oklch(0.5 0.14 150);
+  --channel-facebook: oklch(0.47 0.16 265);
+  --channel-instagram: oklch(0.5 0.18 350);
+  --channel-phone: oklch(0.48 0.09 200);
+  --channel-web: oklch(0.5 0.06 250);
+  --channel-offline: oklch(0.5 0.05 80);
+
+  /* Message delivery state. Forward-only, matching the state machine in ADR 0006. */
+  --status-queued: oklch(0.5 0.02 250);
+  --status-sent: oklch(0.48 0.06 200);
+  --status-delivered: oklch(0.46 0.1 185);
+  --status-read: oklch(0.47 0.13 150);
+  --status-failed: var(--destructive);
+
+  /* WhatsApp 24-hour conversation window (ADR 0007). Closed is amber, not red:
+     it is a constraint on what the rep may send, not an error they caused. */
+  --window-open: oklch(0.47 0.13 150);
+  --window-closed: oklch(0.52 0.13 75);
+}
+
+.dark {
+  --stage-new: oklch(0.82 0.03 250);
+  --stage-contacted: oklch(0.79 0.12 250);
+  --stage-qualified: oklch(0.75 0.1 185);
+  --stage-proposal: oklch(0.8 0.13 75);
+  --stage-won: oklch(0.76 0.13 150);
+  --stage-lost: oklch(0.72 0.14 20);
+
+  --channel-whatsapp: oklch(0.76 0.14 150);
+  --channel-facebook: oklch(0.8 0.14 265);
+  --channel-instagram: oklch(0.74 0.16 350);
+  --channel-phone: oklch(0.76 0.09 200);
+  --channel-web: oklch(0.79 0.06 250);
+  --channel-offline: oklch(0.79 0.05 80);
+
+  --status-queued: oklch(0.82 0.02 250);
+  --status-sent: oklch(0.76 0.06 200);
+  --status-delivered: oklch(0.75 0.1 185);
+  --status-read: oklch(0.76 0.13 150);
+  --status-failed: var(--destructive);
+
+  --window-open: oklch(0.76 0.13 150);
+  --window-closed: oklch(0.8 0.13 75);
+}
+
+@theme inline {
+  /* System fonts, deliberately. A webfont costs 40-100 KB against a 150 KB budget
+     (architecture.md section 18) and blocks first text paint on a 3G connection.
+     Roboto is the system face on the Android devices this product is used on, so the
+     stack below renders in the local system font with zero download. ADR 0016. */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  /* Minimum comfortable touch target, 44px. Generates min-h-tap, size-tap, p-tap.
+     Every interactive element in a list or pipeline column must reach it. */
+  --spacing-tap: 2.75rem;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Convert domain tokens, exposed as utilities: text-stage-won, border-l-window-closed,
+     bg-channel-whatsapp/10, and so on. */
+  --color-stage-new: var(--stage-new);
+  --color-stage-contacted: var(--stage-contacted);
+  --color-stage-qualified: var(--stage-qualified);
+  --color-stage-proposal: var(--stage-proposal);
+  --color-stage-won: var(--stage-won);
+  --color-stage-lost: var(--stage-lost);
+
+  --color-channel-whatsapp: var(--channel-whatsapp);
+  --color-channel-facebook: var(--channel-facebook);
+  --color-channel-instagram: var(--channel-instagram);
+  --color-channel-phone: var(--channel-phone);
+  --color-channel-web: var(--channel-web);
+  --color-channel-offline: var(--channel-offline);
+
+  --color-status-queued: var(--status-queued);
+  --color-status-sent: var(--status-sent);
+  --color-status-delivered: var(--status-delivered);
+  --color-status-read: var(--status-read);
+  --color-status-failed: var(--status-failed);
+
+  --color-window-open: var(--window-open);
+  --color-window-closed: var(--window-closed);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}

@@ -2,7 +2,7 @@
 
 Target architecture for the MVP defined in [`mvp-scope.md`](./mvp-scope.md), designed so the deferred product in [`product-spec.md`](./product-spec.md) — quotes, invoices, payments, attribution, and the **Pro-tier public API** — can be added without rework.
 
-Deliberately written **stack-agnostic**. Checklist item S1 is still open, so §3 holds the stack as a slot with a recommendation. Everything else here holds regardless of which language wins.
+Written stack-agnostic and still largely stack-independent: the layering, invariants, and messaging design hold regardless of runtime. The stack itself is now decided — §3, ADR 0001.
 
 **Last updated:** 2026-08-18
 
@@ -37,29 +37,33 @@ Deliberately written **stack-agnostic**. Checklist item S1 is still open, so §3
 
 ---
 
-## 3. Stack slot **[DECIDE — S1]**
+## 3. Stack — decided (S1, ADR 0001)
 
-The layering below is stack-independent. The slot needs filling before implementation.
+TypeScript throughout, one pnpm monorepo, three runtimes, one datastore.
 
-| Layer | Requirement | Recommendation |
-|-------|-------------|----------------|
-| Datastore | Relational, transactional, JSON columns, row-level security available | **PostgreSQL 16** |
-| Web/UI | Server-rendered, minimal client JS, works on low-end Android | Server-rendered framework in the team's primary language |
-| Jobs | Durable queue with scheduling, retries, and dead-lettering | Postgres-backed queue (one less service to run) |
-| Cache | Optional at MVP scale; not on the critical path | Defer |
-| Object storage | Only if attachments ship; not in scope §19 | Defer |
+| Concern | Choice |
+|---------|--------|
+| Web | **Next.js**, App Router. UI plus BFF route handlers that hold the session |
+| API | **NestJS on the Fastify adapter**. HTTP interface, webhook ingress, later the Pro-tier public API |
+| Worker | **NestJS standalone application context**, sharing modules with the API |
+| Domain | `packages/core` and `packages/application` — framework-free, shared by API and worker |
+| Datastore | **PostgreSQL 16**, with row-level security as the tenancy boundary |
+| Query layer | **Drizzle ORM** + Drizzle Kit migrations, in `packages/infra` only (ADR 0017) |
+| Jobs | Postgres-backed queue (ADR 0010) — no second stateful service |
+| API docs | OpenAPI generated from code and committed (ADR 0015) |
+| Cache, object storage | Deferred. Not on the critical path at pilot scale |
 
-**Recommendation:** a modular monolith plus one worker process, both deploying from the same codebase. Convert still has backend code, but it is not a separate backend product or separate service repository. The web/UI, server routes, service layer, domain modules, provider adapters, and worker share one codebase; the worker is a separate runtime entry point for background jobs. Two runtimes, not five. At 3–5 pilot businesses, service decomposition buys nothing and costs operational overhead the team does not have.
+Three processes rather than the two a server-rendered monolith would need. What that buys: the API boundary the deck already sells at Pro tier exists from day one, NestJS DI makes the ports-and-adapters wiring structural rather than a convention, the worker is a first-class runtime sharing use cases, and webhook ingress is insulated from UI deploys — shipping a screen cannot drop a WhatsApp delivery receipt.
 
-Shortlist, with the honest trade:
+What it costs, recorded honestly: more boilerplate per CRUD path, a cross-origin session problem (solved by the BFF in ADR 0013), longer CI, three processes to run locally, and a DTO duplication risk between web and API (contained by ADR 0014 and by generating the web client from the committed OpenAPI spec).
 
-| Option | For | Against |
-|--------|-----|---------|
-| TypeScript, server-rendered full-stack | One language across UI and API; smallest JS payload with server components; largest hiring pool locally | Framework churn; worker needs a separate process anyway |
-| Python (Django) | Admin interface free — genuinely useful for pilot support; mature ORM and migrations; Celery well understood | Weaker fit if the team is JS-first; two languages if the UI grows interactive |
-| Go API + JS client | Smallest runtime footprint; excellent concurrency for the messaging worker | Most code per CRUD feature, and this product is CRUD-heavy; larger client bundle works against C1 |
+### The one hard operational constraint
 
-**Deciding rule:** pick the language the team already ships production code in. Nothing in this architecture depends on the answer, and the pilot is won or lost on follow-up reminders working, not on runtime benchmarks.
+**`web`, `api`, and Postgres deploy to the same region.** Every page render is now web → api → database. Co-located that is a few milliseconds; split across continents — the web app on a US or EU edge platform with the database in Africa — it is two intercontinental round trips per render against a 2.5 s LCP budget on 3G (§18). This effectively rules out an edge-only deployment and points at a container host in the chosen region.
+
+### Layering
+
+The dependency rule, the layer matrix, and the composition-root rule are machine-enforced. `.boundaries.json` is the executable form of §5, checked by `tools/check_boundaries.py` as the first CI gate. See [`engineering-guardrails.md`](./engineering-guardrails.md) §2.
 
 ---
 
@@ -67,14 +71,15 @@ Shortlist, with the honest trade:
 
 ```mermaid
 graph LR
-  Rep["Sales rep<br/>(mobile browser)"] --> App
-  Owner["Owner / admin<br/>(mobile or desktop)"] --> App
+  Rep["Sales rep<br/>(mobile browser)"] --> Web
+  Owner["Owner / admin<br/>(mobile or desktop)"] --> Web
   Cust["End customer"] -.->|"WhatsApp / SMS"| WA
-  Cust -->|"web lead form"| App
+  Cust -->|"web lead form"| Web
 
-  App["Convert<br/>web + API"] --> DB[("PostgreSQL")]
-  Worker["Worker<br/>(jobs + scheduler)"] --> DB
-  App --> Queue[("Job queue")]
+  Web["web (Next.js)<br/>UI + BFF, holds session"] -->|"server-side http"| App
+  App["api (NestJS/Fastify)<br/>+ webhook ingress"] --> DB[("PostgreSQL")]
+  Worker["worker (NestJS)<br/>jobs + scheduler"] --> DB
+  App --> Queue[("Job queue<br/>in Postgres")]
   Queue --> Worker
 
   Worker -->|"send"| WA["WhatsApp provider<br/>(Meta test, Cloud API, BSP, or internal adapter)"]
@@ -403,16 +408,19 @@ The pilot's real purpose is learning. If activation (10 contacts + 1 deal in 7 d
 ## 17. Deployment topology
 
 ```
-┌─────────────┐   ┌──────────────┐
-│  web/api    │   │    worker    │   same image, different entrypoint
-└──────┬──────┘   └──────┬───────┘
-       └────────┬────────┘
-          ┌─────▼─────┐
-          │ PostgreSQL│  managed, PITR backups, read replica only if measured
-          └───────────┘
+┌──────────────┐      ┌──────────────┐   ┌──────────────┐
+│ web (Next)   │─────▶│ api (Nest)   │   │ worker (Nest)│
+│ BFF, session │ http │ + webhooks   │   │ jobs         │
+└──────────────┘      └──────┬───────┘   └──────┬───────┘
+                             └──────┬───────────┘
+                              ┌─────▼─────┐
+                              │ PostgreSQL│  managed, PITR backups,
+                              └───────────┘  read replica only if measured
 ```
 
-- Two processes, one image, one migration path. Scale the worker independently of the web tier — messaging load and human load do not correlate.
+- Three processes, one repository, one migration path. All in the same region (§3). `api` and `worker` build from the same image with different entrypoints; `web` is its own build.
+- Only `api` and `worker` hold database credentials. `web` has none — it holds a session cookie and an API service credential (ADR 0013).
+- Scale the worker independently of the web tier — messaging load and human load do not correlate.
 - Three environments: local, staging, production. Demo/staging may use Meta test credentials, a BSP sandbox, or a temporary third-party provider account. Production uses the chosen production adapter. Nothing in the pilot should ever be a first run of a code path.
 - **Region [DECIDE]:** an Africa region (Johannesburg or Cape Town) roughly halves round-trip latency from Accra versus Europe, which matters given C1, and gives a simpler residency story for L1. Europe is cheaper with wider managed-service choice. Recommendation: Africa if the managed Postgres and cost work out; otherwise stay container-portable and revisit.
 - CI: lint, type check, unit tests, integration tests against a real Postgres, migration check, and the §18 performance budget as a hard gate.
@@ -460,8 +468,8 @@ Blocking. Each maps to a checklist item; none can be resolved unilaterally by en
 
 | Ref | Assumption made here | Needs |
 |-----|---------------------|-------|
-| S1 | Modular monolith + worker, Postgres | Stack choice |
-| A1 | Long-lived mobile sessions | Login method |
+| ~~S1~~ | ~~Stack~~ | **Decided** — Next.js + NestJS/Fastify + worker on Postgres (ADR 0001) |
+| A1 | Long-lived mobile sessions, held by the web BFF (ADR 0013) | Login method |
 | A6 | Principal abstraction from day one | Sign-off |
 | R1 | `phone_e164` unique per org, merge prompt on collision | Sign-off |
 | R2/R8 | Lead and Deal as separate state machines; explicit conversion | Sign-off |
@@ -478,19 +486,21 @@ R3 and the demo spike outcome are the two that stall the most downstream demo wo
 
 ## 21. ADR index
 
-Architecture decisions to record as ADRs once accepted. Numbered now so they can be cited before they are written.
+The decisions in this document are recorded individually under [`adr/`](./adr/), each with its context, rejected alternatives, and enforcement mechanism. Fifteen records exist; 0001 and 0015 are Accepted, the rest are Proposed pending technical design sign-off.
 
-| ADR | Title |
-|-----|-------|
-| 001 | Modular monolith plus worker over microservices |
-| 002 | PostgreSQL row-level security as the tenancy boundary |
-| 003 | Principal abstraction covering sessions, API clients, and the worker |
-| 004 | ULID external identifiers |
-| 005 | Provider-agnostic messaging ports |
-| 006 | Unified bidirectional message record with forward-only status |
-| 007 | Derived conversation-window state, surfaced in the UI |
-| 008 | Consent as an append-only record |
-| 009 | Append-only activity log, distinct from system audit |
-| 010 | Postgres-backed job queue over a dedicated broker |
-| 011 | Outbox events as the single source for notifications and future webhooks |
-| 012 | Performance budget enforced in CI |
+See [`adr/README.md`](./adr/README.md) for the full index and the rules for writing and superseding one.
+
+Two additions since this document was first written, both consequences of the stack decision: **0013** (Next.js as a BFF, so the browser never holds an API credential) and **0014** (a shared contracts package as the only coupling between web and api).
+
+### How these rules are kept
+
+| Mechanism | Covers |
+|-----------|--------|
+| `.boundaries.json` + `tools/check_boundaries.py` | The dependency rule, composition roots, forbidden packages per layer |
+| `tests/invariants/` + `tools/check_invariant_coverage.py` | Invariants I1–I12 as executable specification |
+| `tools/check_adr_discipline.py` | A guardrail cannot change without an ADR in the same pull request |
+| CI gates G1–G10 | Boundaries, ADR pairing, types, lint, tests, invariants, migrations, RLS, integration, performance, OpenAPI currency |
+| [`code-review-checklist.md`](./code-review-checklist.md) | What a machine cannot check — consent in the send path, window state in the UI, cross-tenant verification |
+| [`definition-of-done.md`](./definition-of-done.md) | Story and release completion, including the messaging-specific criteria |
+
+Full detail in [`engineering-guardrails.md`](./engineering-guardrails.md).

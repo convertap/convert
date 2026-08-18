@@ -1,14 +1,17 @@
 # Convert — SME Leads Platform
 
-Mobile-first sales & lead management platform for Ghanaian SMEs. Pre-code: only docs exist so far.
+Mobile-first sales & lead management platform for Ghanaian SMEs. Docs, directory skeleton, design tokens, and guardrails exist; the workspace is not scaffolded yet.
 
 ## Documents and precedence
 
 1. **`docs/mvp-scope.md`** — authoritative build scope. Wins on anything in scope.
 2. **`docs/product-spec.md`** — full product vision + commercial model, derived from `Convert_Pitch_Deck.pptx`. Reference for intent, not for scope. §12 holds open questions, §13 the deck-vs-scope divergences.
-3. **`docs/pre-development-checklist.md`** — what must be obtained, decided, or proven before implementation starts. IDs (E0–E7, L1–L4, R1–R9, A1–A6, S1–S6, P1–P6) are stable; cite them. §10 is the decision log — record decisions there as they land.
-4. **`docs/architecture.md`** — target architecture. Stack-agnostic; §3 holds the stack slot, §20 lists the decisions it assumes, §21 the ADR index. Cite ADR numbers (001–012) even before the ADRs are written.
-5. `C:\Users\SolomonAboagye\Downloads\Convert_Pitch_Deck.pptx` — original source. 12 slides.
+3. **`docs/pre-development-checklist.md`** — what must be obtained, decided, or proven before implementation starts. IDs (E0–E7, L1–L4, R1–R9, A1–A6, S1–S7, P1–P6) are stable; cite them. §10 is the decision log — record decisions there as they land.
+4. **`docs/architecture.md`** — target architecture. §3 the decided stack, §6 invariants I1–I12, §20 the decisions it still assumes, §21 how the rules are kept.
+5. **`docs/adr/`** — 17 decision records. 0001, 0015, 0016, 0017 Accepted; rest Proposed. Cite by number. Never edit an accepted Decision — supersede it.
+6. **`docs/engineering-guardrails.md`** — layout, the dependency rule, CI gates G1–G13, conventions. With `docs/code-review-checklist.md`, `docs/definition-of-done.md`, `docs/test-strategy.md`.
+7. **`docs/design-system.md`** — shadcn primitives, Convert token tiers, domain tokens for stage/channel/status/window, accessibility and performance rules (ADR 0016).
+8. `C:\Users\SolomonAboagye\Downloads\Convert_Pitch_Deck.pptx` — original source. 12 slides.
 
 Do not resolve a scope conflict yourself. If the two docs disagree on something not already in `product-spec.md` §13, add it there and flag it.
 
@@ -32,13 +35,31 @@ WhatsApp integration depth. Meta test credentials, Meta Cloud API direct, third-
 
 ## Stack
 
-Not yet chosen (checklist S1). `architecture.md` §3 holds the slot and a recommendation — one codebase with web/API process + worker process on Postgres — but do not assume a framework, ORM, or host until S1 is decided. This is not a separate backend service/repo architecture. Everything else in `architecture.md` is stack-independent and can be cited now.
+Decided 2026-08-18 (S1, ADR 0001): **Next.js** web · **NestJS on the Fastify adapter** api · **NestJS standalone** worker · **PostgreSQL 16** with **Drizzle** (ADR 0017) · pnpm monorepo · Postgres-backed job queue (ADR 0010) · OpenAPI generated and committed from the first endpoint (S7, ADR 0015).
+
+Not yet scaffolded — no `package.json` yet. The directory skeleton, boundary rules, and guardrails exist; the workspace scaffold is the next task.
+
+Hard constraint: **web, api, and Postgres deploy to the same region.** Every render is web → api → db, so a split deployment costs two intercontinental round trips against a 2.5 s LCP budget. Rules out edge-only hosting.
 
 ## Messaging adapters
 
 All WhatsApp/SMS integrations must go through the provider-neutral messaging adapter contract. Valid implementations include Meta test credentials for demo, a third-party BSP/provider, Meta Cloud API direct, and the future internal production provider. Do not leak provider-specific payloads or APIs into contacts, leads, campaigns, tasks, activities, or insights.
 
+## Guardrails — run before claiming anything works
+
+```bash
+python tools/check_boundaries.py           # layer boundaries (G1). Run before every push.
+python tools/check_boundaries.py --matrix   # allowed-dependency matrix
+python tools/check_invariant_coverage.py    # every invariant I1–I12 has a test (G6)
+python tools/check_contrast.py              # design token contrast, WCAG (G13)
+```
+
+`.boundaries.json` is the executable form of `architecture.md` §5. `apps/web` may import `@convert/contracts` **only** — that rule is what keeps domain logic out of the browser bundle.
+
+Changing `.boundaries.json`, `ci.yml`, or `engineering-guardrails.md` requires an ADR in the same commit (G2, enforced). Never edit a rule to make a red build green.
+
 ## Conventions
 
 - Docs live in `docs/`, kebab-case filenames, `##` for top-level sections.
 - Update the `Last updated` line when editing a doc.
+- Conventional Commits. **No agent or tool co-authorship trailers** — commits carry their human author only.

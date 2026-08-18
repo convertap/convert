@@ -1,0 +1,33 @@
+# Review ownership. GitHub requests these reviewers automatically.
+#
+# PLACEHOLDER — replace the handles below with real ones before enabling branch
+# protection, otherwise every pull request waits on a team that does not exist.
+# Later lines win, so the specific rules at the bottom override the catch-all.
+
+*                                   @convertap/engineering
+
+# Product truth. A change here changes what gets built, so it needs product sign-off,
+# not only engineering review.
+/docs/mvp-scope.md                  @convertap/product @convertap/engineering
+/docs/product-spec.md               @convertap/product
+/docs/pre-development-checklist.md  @convertap/product @convertap/engineering
+
+# Architecture and the rules that enforce it. Changing these is an ADR-level act
+# (CI gate G2), so they deserve a named reviewer rather than whoever is free.
+/docs/architecture.md               @convertap/engineering
+/docs/adr/                          @convertap/engineering
+/docs/engineering-guardrails.md     @convertap/engineering
+/.boundaries.json                   @convertap/engineering
+/tools/                             @convertap/engineering
+/.github/workflows/                 @convertap/engineering
+
+# The domain. Invariants I1-I12 live here; a change is a change to the rules.
+/packages/core/                     @convertap/engineering
+/tests/invariants/                  @convertap/engineering
+
+# Messaging adapters carry money and compliance risk: per-message cost, template
+# approval, consent, and the 24-hour window.
+/packages/infra/src/providers/      @convertap/engineering
+
+# Migrations are the least reversible thing in the repository.
+/packages/infra/src/db/migrations/  @convertap/engineering

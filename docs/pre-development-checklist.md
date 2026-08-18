@@ -139,7 +139,8 @@ R3 is not a permissions feature. It decides whether every query is owner-scoped 
 
 | ID | Item | Notes | Status |
 |----|------|-------|--------|
-| S1 | Stack selection | Choose on team skill, not novelty — whoever builds it maintains it | ☐ |
+| S1 | Stack selection | **Decided 2026-08-18:** Next.js web, NestJS on the Fastify adapter, one worker, one PostgreSQL, pnpm monorepo. ADR 0001. Hard constraint: web, api, and database in the same region — see `architecture.md` §3 | ☑ |
+| S7 | OpenAPI from the first endpoint | **Decided 2026-08-18:** generated with `@nestjs/swagger`, committed as `apps/api/openapi.json`, drift fails CI gate G10. ADR 0015 | ☑ |
 | S2 | Mobile performance budget as a number | JS bundle ceiling and LCP target on throttled 4G, enforced in CI. Mobile-first is the entire differentiation claim (deck slide 7) | ☐ |
 | S3 | Background jobs and scheduler | Required in Phase 1, not later: campaign sends, follow-up reminders, delivery webhooks | ☐ |
 | S4 | Public webhook endpoint design | Signature-verified, idempotent, replay-safe. Providers retry; duplicates will arrive | ☐ |
@@ -198,7 +199,7 @@ Three tracks run concurrently. Only the third produces code.
 E1 → E2 → E4 · E5 · E6 · L1
 
 **Track B — decisions** (weeks 1–2, mostly meetings)
-R1–R8 in one session → A1–A5 → S1 → L2–L4 → P1–P6
+R1–R9 in one session → A1–A6 → L2–L4 → P1–P6 · S1 and S7 are decided (ADR 0001, ADR 0015)
 
 **Track C — proving** (weeks 2–3, throwaway code)
 E0 → demo WhatsApp spike (§7) → E3 production provider decision → production readiness spike → answer recorded in `product-spec.md` §12
