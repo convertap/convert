@@ -1,0 +1,496 @@
+# Convert — Architecture
+
+Target architecture for the MVP defined in [`mvp-scope.md`](./mvp-scope.md), designed so the deferred product in [`product-spec.md`](./product-spec.md) — quotes, invoices, payments, attribution, and the **Pro-tier public API** — can be added without rework.
+
+Deliberately written **stack-agnostic**. Checklist item S1 is still open, so §3 holds the stack as a slot with a recommendation. Everything else here holds regardless of which language wins.
+
+**Last updated:** 2026-08-18
+
+**Status:** Proposal. Sections marked **[DECIDE]** carry a checklist ID and need product-owner sign-off before implementation.
+
+---
+
+## 1. Constraints that drive every decision
+
+| # | Constraint | Source | Architectural consequence |
+|---|-----------|--------|---------------------------|
+| C1 | Reps work from phones on variable mobile networks | deck slide 7, scope §18 | Server-rendered where possible; hard JS budget; every write tolerant of a dropped connection |
+| C2 | WhatsApp is the primary channel and is rule-bound | deck slide 7, checklist E4 | Messaging is a first-class subsystem with its own state machine, not a utility function |
+| C3 | Multiple businesses share one deployment | scope §5 | Row-level tenancy enforced below the application layer, never by convention |
+| C4 | Activity history must outlive the rep who created it | deck P3, scope §10 | Append-only log; no destructive edits |
+| C5 | A public API is sold at Pro tier | deck slide 6, Phase 3 | Principals, opaque IDs, idempotency, and outbound events designed now, exposed later |
+| C6 | Messaging costs real money per send | checklist E4 | Every send metered, queued, paced, and idempotent |
+| C7 | Third-party customer PII under Ghana Act 843 | checklist L1–L4 | Consent as data; export and deletion designed in, not bolted on |
+| C8 | No billing in the MVP | scope §20 | Entitlements are a readable policy layer with limits switched off, not absent code |
+
+---
+
+## 2. Principles
+
+1. **Domain logic is framework-free.** Business rules live in a `core` layer that imports nothing from the web framework or the ORM. This is what makes the stack slot in §3 genuinely deferrable.
+2. **The UI is the first API client.** Screens call the same service layer a public API would. Exposing the API later becomes an authentication and serialization concern, not a rewrite.
+3. **Tenancy is enforced, not remembered.** A query that forgets `org_id` must fail, not silently return another business's data.
+4. **State changes emit facts.** Every meaningful change writes an activity row and, where relevant, an outbox event. Read models and future webhooks are derived from those facts.
+5. **External calls are adapters.** WhatsApp, SMS, and any future accounting integration sit behind a port. The domain never knows the vendor.
+6. **Everything crossing the network is idempotent.** Provider webhooks retry, phones resubmit on flaky connections, and campaign workers get restarted. Duplicates are a design input.
+7. **Build the seam, not the feature.** For deferred capabilities, add the boundary and stop. No speculative tables, no half-built invoicing.
+
+---
+
+## 3. Stack slot **[DECIDE — S1]**
+
+The layering below is stack-independent. The slot needs filling before implementation.
+
+| Layer | Requirement | Recommendation |
+|-------|-------------|----------------|
+| Datastore | Relational, transactional, JSON columns, row-level security available | **PostgreSQL 16** |
+| Web/UI | Server-rendered, minimal client JS, works on low-end Android | Server-rendered framework in the team's primary language |
+| Jobs | Durable queue with scheduling, retries, and dead-lettering | Postgres-backed queue (one less service to run) |
+| Cache | Optional at MVP scale; not on the critical path | Defer |
+| Object storage | Only if attachments ship; not in scope §19 | Defer |
+
+**Recommendation:** a modular monolith plus one worker process, both deploying from the same codebase. Convert still has backend code, but it is not a separate backend product or separate service repository. The web/UI, server routes, service layer, domain modules, provider adapters, and worker share one codebase; the worker is a separate runtime entry point for background jobs. Two runtimes, not five. At 3–5 pilot businesses, service decomposition buys nothing and costs operational overhead the team does not have.
+
+Shortlist, with the honest trade:
+
+| Option | For | Against |
+|--------|-----|---------|
+| TypeScript, server-rendered full-stack | One language across UI and API; smallest JS payload with server components; largest hiring pool locally | Framework churn; worker needs a separate process anyway |
+| Python (Django) | Admin interface free — genuinely useful for pilot support; mature ORM and migrations; Celery well understood | Weaker fit if the team is JS-first; two languages if the UI grows interactive |
+| Go API + JS client | Smallest runtime footprint; excellent concurrency for the messaging worker | Most code per CRUD feature, and this product is CRUD-heavy; larger client bundle works against C1 |
+
+**Deciding rule:** pick the language the team already ships production code in. Nothing in this architecture depends on the answer, and the pilot is won or lost on follow-up reminders working, not on runtime benchmarks.
+
+---
+
+## 4. System context
+
+```mermaid
+graph LR
+  Rep["Sales rep<br/>(mobile browser)"] --> App
+  Owner["Owner / admin<br/>(mobile or desktop)"] --> App
+  Cust["End customer"] -.->|"WhatsApp / SMS"| WA
+  Cust -->|"web lead form"| App
+
+  App["Convert<br/>web + API"] --> DB[("PostgreSQL")]
+  Worker["Worker<br/>(jobs + scheduler)"] --> DB
+  App --> Queue[("Job queue")]
+  Queue --> Worker
+
+  Worker -->|"send"| WA["WhatsApp provider<br/>(Meta test, Cloud API, BSP, or internal adapter)"]
+  Worker -->|"send"| SMS["SMS aggregator"]
+  WA -.->|"inbound + delivery status"| Hook
+  SMS -.->|"delivery reports"| Hook
+  Hook["Webhook ingress"] --> DB
+
+  Worker -.->|"future: outbound events"| Ext["Customer systems<br/>(Pro-tier API era)"]
+```
+
+Three entry points, and they have different threat and reliability profiles:
+
+- **Authenticated app** — sessions, org-scoped, human pace.
+- **Public lead form** — unauthenticated, rate-limited, spam-exposed, writes into a specific organization.
+- **Webhook ingress** — unauthenticated by session but signature-verified, high retry volume, must be idempotent.
+
+Keep them separate from the first commit. Merging them is how the lead form ends up trusted.
+
+---
+
+## 5. Module map
+
+```mermaid
+graph TD
+  subgraph Interface
+    UI["Web UI"]
+    PUB["Public lead form"]
+    API["Public API<br/>(Pro tier, deferred)"]
+    WH["Webhook ingress"]
+  end
+  subgraph Application
+    SVC["Service layer<br/>(use cases, entitlements, authz)"]
+  end
+  subgraph Core["Core (framework-free)"]
+    ID["Identity & orgs"]
+    CRM["Contacts · Leads · Deals"]
+    ACT["Activities · Tasks"]
+    MSG["Messaging & consent"]
+    CMP["Campaigns"]
+    INS["Insights"]
+  end
+  subgraph Infrastructure
+    REPO["Repositories"]
+    ADP["Provider adapters"]
+    JOBS["Queue & scheduler"]
+    OBS["Logging · metrics · tracing"]
+  end
+  UI --> SVC
+  PUB --> SVC
+  API --> SVC
+  WH --> SVC
+  SVC --> Core
+  Core --> REPO
+  SVC --> JOBS
+  MSG --> ADP
+```
+
+**The rule that matters:** all four interfaces converge on one service layer. Authorization, entitlement checks, and activity logging happen there — once — so the public API cannot later become a second, weaker door into the same data.
+
+| Context | Owns | Deliberately does not own |
+|---------|------|---------------------------|
+| Identity & orgs | Organizations, users, membership, roles, invitations, sessions, API clients | Anything customer-facing |
+| CRM | Contacts, leads, deals, pipeline, stages, sources | How anyone was messaged |
+| Activities & tasks | Append-only activity log, follow-up tasks, reminders | Message delivery mechanics |
+| Messaging & consent | Messages, templates, consent records, conversation windows, provider events | Why a message was sent |
+| Campaigns | Campaign definitions, recipient lists, send orchestration | The transport itself |
+| Insights | Read models for the dashboard, source rollups | Writes of any kind |
+
+---
+
+## 6. Domain model
+
+```mermaid
+erDiagram
+  ORGANIZATION ||--o{ ORG_MEMBER : has
+  USER ||--o{ ORG_MEMBER : joins
+  ORGANIZATION ||--o{ CONTACT : owns
+  ORGANIZATION ||--o{ PIPELINE : owns
+  PIPELINE ||--o{ PIPELINE_STAGE : contains
+  CONTACT ||--o{ LEAD : generates
+  LEAD |o--o| DEAL : converts_to
+  CONTACT ||--o{ DEAL : party_to
+  PIPELINE_STAGE ||--o{ DEAL : holds
+  CONTACT ||--o{ ACTIVITY : timeline
+  LEAD ||--o{ ACTIVITY : timeline
+  DEAL ||--o{ ACTIVITY : timeline
+  CONTACT ||--o{ TASK : about
+  CONTACT ||--o{ MESSAGE : to_from
+  CONTACT ||--o{ CONSENT : grants
+  MESSAGE_TEMPLATE ||--o{ MESSAGE : renders
+  CAMPAIGN ||--o{ CAMPAIGN_RECIPIENT : targets
+  CAMPAIGN_RECIPIENT ||--o| MESSAGE : produces
+  ORGANIZATION ||--o{ API_CLIENT : issues
+  ORGANIZATION ||--o{ OUTBOX_EVENT : emits
+```
+
+### Entities beyond scope §24, and why each exists
+
+| Entity | Reason |
+|--------|--------|
+| `consent` | Marketing opt-in is a Meta requirement (E4.2) *and* an Act 843 requirement (L3). Needs timestamp, source, channel, and withdrawal — a boolean on `contact` cannot carry that |
+| `provider_event` | Raw inbound webhook payloads, stored before interpretation. The idempotency key and the audit trail when a provider disputes delivery |
+| `campaign_recipient` | Per-recipient send state. A campaign is not one send; it is N sends with N independent outcomes |
+| `api_client` | Pro-tier API credentials (C5). Present as a table, unreferenced until the API ships |
+| `outbox_event` | Durable record of domain facts, for outbound integration webhooks and for rebuilding read models |
+| `audit_event` | System-level actions — logins, role changes, deactivations, exports. Distinct from `activity`, which is the sales timeline reps read |
+
+### Key fields on `contact`
+
+`phone_e164` is the natural identity (checklist R1). Normalize on write, store the raw input alongside it for support purposes, and index `(org_id, phone_e164)` uniquely.
+
+`last_inbound_at` is maintained on every inbound message. It is what determines whether the WhatsApp 24-hour window is open — see §10.3.
+
+### Invariants **[DECIDE — R1–R9]**
+
+Proposals, to be confirmed in the §3 decision session of the checklist:
+
+| ID | Invariant |
+|----|-----------|
+| I1 | Every tenant-owned row carries a non-null `org_id`; no cross-org foreign key ever resolves |
+| I2 | `(org_id, phone_e164)` is unique on `contact`; a second attempt surfaces a merge prompt rather than a validation error |
+| I3 | A `lead` may exist with no `deal`. A `deal` requires a `contact`. A `lead` converts to at most one `deal` |
+| I4 | `lead.status = Converted` requires a linked `deal`; `Lost` requires a `lost_reason` |
+| I5 | `deal` outcomes `Won`/`Lost` are terminal; reopening creates a new deal, preserving history |
+| I6 | `activity` rows are insert-only. No update, no delete, at any layer (C4) |
+| I7 | Deactivating a member never orphans records: reassignment is required in the same transaction (R4) |
+| I8 | Money is integer pesewas, currency fixed to GHS (R5) |
+| I9 | A marketing message requires a live `consent` row for that channel at send time (L3, E4.2) |
+| I10 | A free-form WhatsApp message requires an open conversation window; otherwise only a template may be sent (§10.3) |
+| I11 | All timestamps stored UTC; all display and all "due"/"overdue" arithmetic in Africa/Accra (R6) |
+| I12 | Every entity exposes an opaque external ULID; internal integer keys never leave the process (R9) |
+
+---
+
+## 7. Multi-tenancy and authorization
+
+Three layers, each catching what the one above misses.
+
+**1. Database — Postgres row-level security.** Every tenant table gets an RLS policy on `org_id`, and the application connects as a non-superuser role that cannot bypass it. The session sets the current org per transaction. This turns a forgotten `WHERE org_id = …` from a data breach into an empty result set. It is the single highest-leverage decision in this document and costs about a day.
+
+**2. Service layer — authorization.** Role checks (`Owner`, `Sales Representative`) and record-level visibility. **[DECIDE — R3]**: the proposal is owner sees all, rep sees own by default, with an org-level toggle to open the pipeline. This must be resolved before implementation because it determines whether every list query carries an owner predicate.
+
+**3. Interface layer — principals.** Resolves *who* is acting and hands the service layer a principal. Never queries the database directly.
+
+### Principals **[DECIDE — A6]**
+
+```
+Principal
+├── UserPrincipal   (session; org_id, user_id, role)
+├── ClientPrincipal (API key; org_id, client_id, scopes)   ← Pro tier, deferred
+└── SystemPrincipal (worker; org_id, no interactive rights)
+```
+
+Every service method takes a principal. Every activity and audit row records which kind acted. Doing this on day one is what makes C5 cheap; skipping it is what makes it a rewrite. The worker being a first-class principal also means "the system sent this reminder" is attributable in the timeline, which matters for pilot support.
+
+---
+
+## 8. Public API — decided now, shipped later
+
+Not in MVP scope (scope §20). But the conventions below cost nothing while there are no consumers and are near-impossible to change once there are.
+
+| Concern | Decision |
+|---------|----------|
+| Style | REST over JSON, resource-oriented, OpenAPI spec generated from the same route definitions the UI uses |
+| Versioning | URL prefix `/api/v1/`. Additive changes only within a version |
+| IDs | ULIDs in every payload (I12). Never expose integer keys |
+| Auth | Org-scoped API keys at launch, hashed at rest, prefixed for leak detection. OAuth client-credentials only if a partner needs it |
+| Scopes | Per-resource read/write (`contacts:read`, `deals:write`, …), enforced in the service layer against `ClientPrincipal` |
+| Entitlement | API access gated on Pro tier — the first real consumer of the A5 policy layer |
+| Idempotency | `Idempotency-Key` header on all unsafe methods; response replayed for 24h |
+| Pagination | Cursor-based, opaque cursor. Offset pagination breaks under concurrent writes and cannot be retrofitted |
+| Errors | One envelope: stable machine `code`, human `message`, optional field-level `details` |
+| Rate limits | Per principal, not per IP, with limit headers on every response |
+| Outbound webhooks | Fed by `outbox_event`, per-org endpoint registration, signed payloads, at-least-once delivery with exponential backoff and a dead-letter view |
+
+**The internal consequence:** if the UI reads the service layer directly and the API gets its own parallel path, they will diverge and the API will be second-class. One service layer, two serializations (§5).
+
+---
+
+## 9. Job and scheduling architecture
+
+Required in Phase 1, not later (checklist S3). Four workloads:
+
+| Workload | Trigger | Characteristics |
+|----------|---------|-----------------|
+| Message send | Enqueued by campaign or single-send | Rate-limited per WhatsApp number, retryable, metered, idempotent per recipient |
+| Follow-up reminders | Scheduled sweep | Timezone-sensitive (I11), must not double-notify |
+| Provider event processing | Webhook ingress | High volume, out-of-order arrival, idempotent by provider event ID |
+| Read-model refresh | Post-commit or periodic | Dashboard rollups; cheap to rebuild from `activity` and `outbox_event` |
+
+Rules:
+
+- **Every job is idempotent and carries a dedupe key.** Restarts and provider retries are normal operation, not incidents (C6).
+- **Retries use exponential backoff with a dead-letter queue that a human can see.** A silently dropped campaign send is a customer-visible failure with a money cost.
+- **Reminder sweeps are idempotent per (task, due-window).** Firing twice is worse than firing late — it teaches reps to ignore notifications.
+- **Send pacing lives in the worker,** because WhatsApp per-number throughput tiers are a hard external limit (E4.3). A campaign is a paced drip, not a burst.
+
+---
+
+## 10. Messaging subsystem
+
+The highest-risk area (checklist §7) and the one place where extra design pays for itself.
+
+### 10.1 Ports and adapters
+
+```
+core/messaging             ports: MessageSender, TemplateCatalog, ConsentGate
+infra/whatsapp/meta-test   adapter: Meta test credentials for demo
+infra/whatsapp/cloud       adapter: Meta Cloud API direct, if E3 goes that way
+infra/whatsapp/bsp         adapter: third-party BSP/provider, if E3 goes that way
+infra/whatsapp/internal    adapter: future internal production provider
+infra/sms/<aggregator>     adapter: Ghana SMS provider
+```
+
+The domain asks to "send template `follow_up_v1` to contact X on WhatsApp." It never learns the vendor. This is what makes E3 reversible after the spike — swapping Meta test credentials, Cloud API direct, a BSP, or the future internal production provider touches one adapter, not the product.
+
+### 10.2 Unified message record
+
+One `message` table for both directions, with `direction`, `channel`, `provider_message_id`, `template_id`, `status`, and a status history. Reasons: the rep-facing timeline is chronological regardless of direction, and delivery callbacks arrive against the same identifier they were sent with.
+
+Status is a state machine, not a flag:
+
+```
+queued → sent → delivered → read
+   ↓       ↓
+ failed  failed
+```
+
+Callbacks arrive out of order and sometimes twice. Only advance status forward; never regress on a late-arriving earlier state.
+
+### 10.3 Conversation window (C2, I10)
+
+WhatsApp permits free-form replies only within 24 hours of the customer's last inbound message (E4.1). Modelling:
+
+- `contact.last_inbound_at` updated on every inbound message.
+- Window state is **derived**, never stored: `open` if `now - last_inbound_at < 24h`.
+- The service layer rejects a free-form send into a closed window before it reaches the provider — a provider-side rejection costs a round trip and produces a worse error.
+- **The UI must show window state on the contact record.** Otherwise reps compose messages that cannot send, which reads as the product being broken.
+
+This is a case where an external API rule surfaces directly in the interface. Do not hide it.
+
+### 10.4 Consent gate (I9, L3)
+
+Every marketing send passes a consent check: a live `consent` row for that contact and channel, recording when, how, and through which capture path it was granted. Withdrawal writes a new row rather than mutating the old one — the history is the compliance evidence.
+
+Utility and service messages follow different provider rules from marketing; the template's category drives which gate applies.
+
+### 10.5 Inbound handling
+
+1. Verify signature. Reject unsigned traffic before parsing.
+2. Persist the raw payload as a `provider_event`, keyed on the provider's event ID. **Duplicate key means stop here** — the work is already done.
+3. Resolve the sender by `phone_e164` within the receiving organization.
+4. Match or create a contact, append the message and an activity row, update `last_inbound_at`.
+5. **[DECIDE — depends on the WhatsApp spikes]** If no contact matches, create a lead with source `WhatsApp`. This is the deck's headline capture path. The demo spike determines whether it is shown in the demo; the production readiness spike determines whether it ships for real pilot/customer usage.
+
+Step 2 before step 3 is deliberate. Store first, interpret second — when a provider changes payload shape, the raw events are what let you recover.
+
+---
+
+## 11. Activity log and audit
+
+`activity` is the product, not plumbing — it is the direct answer to problem P3, and the reason a business's history survives a rep leaving.
+
+- Insert-only (I6). Corrections are new rows.
+- Typed per scope §10: call, WhatsApp, SMS, meeting, note, follow-up, status change, stage change.
+- Every row records the principal, including `SystemPrincipal` for automated actions.
+- Attached to contact, lead, or deal, and queried as a merged timeline.
+
+`audit_event` is separate and admin-facing: logins, role changes, member deactivation, data export, entitlement changes. Different reader, different retention, different access rules. Conflating the two produces a timeline reps cannot read and an audit trail compliance cannot use.
+
+---
+
+## 12. Insights and read models
+
+Dashboard metrics (scope §15) are counts and sums over leads, deals, tasks, and sources. At pilot scale, query them directly with proper indexes — no aggregation pipeline, no warehouse.
+
+The seam that matters: dashboard queries go through an `Insights` read interface, not scattered ad-hoc SQL in view code. When "leads by source" grows into the cost-per-lead attribution the deck promises (spec §12), the callers do not change.
+
+**Explicitly not built:** cost-per-lead, multi-touch attribution, ad-spend ingestion. Deferred per scope §20, so problem P2 stays open — that gap is recorded in `product-spec.md` §13 item 3 and must not be quietly closed here.
+
+---
+
+## 13. Search and filtering
+
+Postgres full-text search over contacts, leads, and deals with a trigram index for partial phone and name matching. No search service.
+
+Phone search must normalize the query the same way writes do (I2), or reps typing `024…` will fail to find a contact stored as `+23324…`. This is the single most likely search bug in this product.
+
+---
+
+## 14. Notifications
+
+In-app first (scope §16), delivered from the same `outbox_event` stream that will later feed integration webhooks — one fact source, several consumers.
+
+Push and WhatsApp-based reminders are deferred, but the notification record carries a channel field so adding one is additive. Do not model in-app as a special case.
+
+---
+
+## 15. Observability
+
+| Concern | Approach |
+|---------|----------|
+| Structured logs | JSON, always carrying request ID, org ID, and principal kind. Never log message bodies or full phone numbers |
+| Errors | Aggregation service from day one, with release tagging |
+| Tracing | Request → job → provider call, correlated by request ID. Without this, "the campaign didn't send" is unanswerable |
+| Metrics | Message send success rate and cost per org, job queue depth and age, reminder delivery latency, p75 mobile page load |
+| Provider dashboards | WhatsApp quality rating and template approval status. A silent quality downgrade throttles sends and looks like a product bug |
+
+The pilot's real purpose is learning. If activation (10 contacts + 1 deal in 7 days, scope §26) is not instrumented at build time, the pilot produces opinions instead of evidence — checklist S5.
+
+---
+
+## 16. Security
+
+- **Tenancy isolation is the primary control** — RLS plus service-layer authorization plus principal separation (§7).
+- **Public lead form** is unauthenticated and internet-facing: rate limit per IP and per organization, bot mitigation, strict field validation, and no reflection of stored data back to the submitter.
+- **Webhook ingress** verifies provider signatures before parsing; unsigned requests are dropped, not logged as errors.
+- **Secrets** in a managed secret store, never in the repository. Provider credentials are per-environment.
+- **API keys** hashed at rest, shown once, prefixed so leaked keys are detectable in scans.
+- **PII discipline** — customer phone numbers are third-party data under L1–L4. Encrypt at rest, redact in logs, and support per-organization export and deletion from the start (C7). Retrofitting deletion across an append-only log is genuinely hard; design the boundary now.
+- **Sessions** — long-lived on mobile to avoid re-auth cost (relevant if A1 lands on phone+OTP, where every login costs an SMS), with server-side revocation on member deactivation.
+
+---
+
+## 17. Deployment topology
+
+```
+┌─────────────┐   ┌──────────────┐
+│  web/api    │   │    worker    │   same image, different entrypoint
+└──────┬──────┘   └──────┬───────┘
+       └────────┬────────┘
+          ┌─────▼─────┐
+          │ PostgreSQL│  managed, PITR backups, read replica only if measured
+          └───────────┘
+```
+
+- Two processes, one image, one migration path. Scale the worker independently of the web tier — messaging load and human load do not correlate.
+- Three environments: local, staging, production. Demo/staging may use Meta test credentials, a BSP sandbox, or a temporary third-party provider account. Production uses the chosen production adapter. Nothing in the pilot should ever be a first run of a code path.
+- **Region [DECIDE]:** an Africa region (Johannesburg or Cape Town) roughly halves round-trip latency from Accra versus Europe, which matters given C1, and gives a simpler residency story for L1. Europe is cheaper with wider managed-service choice. Recommendation: Africa if the managed Postgres and cost work out; otherwise stay container-portable and revisit.
+- CI: lint, type check, unit tests, integration tests against a real Postgres, migration check, and the §18 performance budget as a hard gate.
+
+---
+
+## 18. Performance budget (C1, S2)
+
+Numbers, not intentions. Enforced in CI, measured on a throttled 4G profile against a mid-range Android device.
+
+| Metric | Budget |
+|--------|--------|
+| Initial JS transferred, main pipeline screen | ≤ 150 KB gzipped |
+| Largest Contentful Paint, throttled 4G | ≤ 2.5 s |
+| Interaction to Next Paint | ≤ 200 ms |
+| Server response, list views at p75 | ≤ 300 ms |
+| Total transfer, first visit | ≤ 500 KB |
+
+These are proposals — the point is that a number exists and a build fails when it regresses. "Mobile-first" is the deck's differentiation claim (slide 7); without a gate it degrades silently, one convenience library at a time.
+
+---
+
+## 19. Expansion seams
+
+For each deferred capability: the seam that goes in now, and the line not to cross.
+
+| Deferred | Seam built in MVP | Line |
+|----------|-------------------|------|
+| Quotes & invoices (scope §21) | `deal` carries a nullable monetary value in integer pesewas; activity types are extensible | No document model, no line items, no tax logic |
+| Payments | Nothing structural | Do not model payment state on deals |
+| Subscription billing | Entitlement policy layer, limits configured off (C8, A5) | No plan tables, no payment provider |
+| Public API (C5) | Principals, ULIDs, service layer, idempotency, error envelope, outbox (§8) | No routes, no key issuance UI |
+| Integration webhooks | `outbox_event` written on domain facts | No endpoint registration, no delivery worker |
+| Attribution / cost-per-lead | Source recorded at capture; `Insights` read interface | No spend ingestion, no attribution model |
+| Multiple pipelines | `pipeline` and `pipeline_stage` are already tables, seeded with one default per org | No pipeline editor UI |
+| Native apps | Responsive web only (scope §18) | No shared-client abstraction layer |
+
+The `pipeline` row is worth calling out: modelling stages as data rather than an enum costs nothing today and is the difference between a config change and a migration when the second pipeline arrives.
+
+---
+
+## 20. Decisions this document assumes
+
+Blocking. Each maps to a checklist item; none can be resolved unilaterally by engineering.
+
+| Ref | Assumption made here | Needs |
+|-----|---------------------|-------|
+| S1 | Modular monolith + worker, Postgres | Stack choice |
+| A1 | Long-lived mobile sessions | Login method |
+| A6 | Principal abstraction from day one | Sign-off |
+| R1 | `phone_e164` unique per org, merge prompt on collision | Sign-off |
+| R2/R8 | Lead and Deal as separate state machines; explicit conversion | Sign-off |
+| R3 | Rep sees own leads by default, org toggle | **Sign-off before any list query is written** |
+| R9 | ULID external IDs | Sign-off |
+| E3 | Provider adapter is swappable | Meta test vs Cloud API direct vs BSP vs internal production adapter |
+| E6 | No Meta Lead Ads ingestion path in MVP | In/out decision |
+| L3 | Consent as a first-class record | Legal input |
+| §10.5 | Inbound WhatsApp creates leads | **Demo spike outcome, then production readiness spike outcome** |
+
+R3 and the demo spike outcome are the two that stall the most downstream demo work. Production provider readiness gates the real pilot/customer launch.
+
+---
+
+## 21. ADR index
+
+Architecture decisions to record as ADRs once accepted. Numbered now so they can be cited before they are written.
+
+| ADR | Title |
+|-----|-------|
+| 001 | Modular monolith plus worker over microservices |
+| 002 | PostgreSQL row-level security as the tenancy boundary |
+| 003 | Principal abstraction covering sessions, API clients, and the worker |
+| 004 | ULID external identifiers |
+| 005 | Provider-agnostic messaging ports |
+| 006 | Unified bidirectional message record with forward-only status |
+| 007 | Derived conversation-window state, surfaced in the UI |
+| 008 | Consent as an append-only record |
+| 009 | Append-only activity log, distinct from system audit |
+| 010 | Postgres-backed job queue over a dedicated broker |
+| 011 | Outbox events as the single source for notifications and future webhooks |
+| 012 | Performance budget enforced in CI |

@@ -1,0 +1,51 @@
+# Secrets — never commit provider credentials (Meta, BSP, SMS aggregator)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Dependencies
+node_modules/
+.pnpm-store/
+vendor/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Build output
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Test & coverage
+coverage/
+.nyc_output/
+.pytest_cache/
+
+# Editors
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Office lock files (Word leaves these next to an open .docx)
+~$*
+
+# Logs & local databases
+*.log
+npm-debug.log*
+*.sqlite
+*.sqlite3
+
+# Delegate scratch artifacts (deck renders — regenerable from the .pptx)
+.codex-review/
