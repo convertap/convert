@@ -8,7 +8,15 @@
       ],
       "numberOfRuns": 3,
       "settings": {
-        "preset": "desktop"
+        "preset": "perf",
+        "formFactor": "mobile",
+        "screenEmulation": {
+          "mobile": true,
+          "width": 360,
+          "height": 800,
+          "deviceScaleFactor": 2
+        },
+        "throttlingMethod": "simulate"
       }
     },
     "assert": {

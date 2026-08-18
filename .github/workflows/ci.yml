@@ -5,7 +5,7 @@ on:
     branches: [main]
   pull_request:
 
-# Gates G1-G9 from docs/engineering-guardrails.md §3.
+# Gates G1-G13 from docs/engineering-guardrails.md §3.
 # Every job is written to pass on an empty repository and tighten automatically as
 # the code it guards lands. A pipeline that is red from day one gets disabled.
 
@@ -47,8 +47,6 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         if: steps.ws.outputs.ready == 'yes'
-        with:
-          version: 9
 
       - uses: actions/setup-node@v4
         if: steps.ws.outputs.ready == 'yes'
@@ -62,15 +60,15 @@ jobs:
 
       - name: G3 type check
         if: steps.ws.outputs.ready == 'yes'
-        run: pnpm -r typecheck
+        run: pnpm typecheck
 
       - name: G4 lint
         if: steps.ws.outputs.ready == 'yes'
-        run: pnpm -r lint
+        run: pnpm lint
 
       - name: G5 unit tests
         if: steps.ws.outputs.ready == 'yes'
-        run: pnpm -r test
+        run: pnpm test
 
       # G6 - every invariant in architecture.md §6 has a test, built or not.
       # G10 - the committed OpenAPI spec must match what the code generates.
@@ -119,8 +117,6 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         if: steps.mig.outputs.ready == 'yes'
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         if: steps.mig.outputs.ready == 'yes'
         with:
@@ -158,8 +154,6 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         if: steps.web.outputs.ready == 'yes'
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         if: steps.web.outputs.ready == 'yes'
         with:
