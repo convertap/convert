@@ -1,0 +1,16 @@
+packages:
+  - apps/*
+  - packages/*
+
+# esbuild fetches a platform binary in a postinstall script; vitest and tsx need it.
+onlyBuiltDependencies:
+  - esbuild
+
+# Acknowledged and deliberately NOT run. @scarf/scarf is install-time telemetry; we do not
+# want a build of ours phoning home, and nothing depends on its side effects.
+ignoredBuiltDependencies:
+  - '@scarf/scarf'
+
+allowBuilds:
+  '@scarf/scarf': false
+  esbuild: true

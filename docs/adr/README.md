@@ -23,6 +23,7 @@ One file per decision. Numbered, immutable once accepted, superseded rather than
 | [0015](./0015-openapi-generated-from-code-and-committed.md) | OpenAPI generated from code and committed to the repository | Accepted |
 | [0016](./0016-shadcn-primitives-with-convert-owned-tokens.md) | shadcn primitives with Convert-owned tokens, in the web app | Accepted |
 | [0017](./0017-drizzle-as-the-query-layer.md) | Drizzle as the query layer and migration tool | Accepted |
+| [0018](./0018-errors-are-first-class.md) | Errors are a first-class part of the product | Accepted |
 
 Statuses: **Proposed** (written, not yet ratified) · **Accepted** (in force) · **Superseded** (replaced, kept for the record) · **Rejected** (considered and declined, kept so it is not re-litigated).
 

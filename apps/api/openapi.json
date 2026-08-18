@@ -1,0 +1,147 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/health": {
+      "get": {
+        "description": "Returns ok when the API process is serving requests. No authentication.",
+        "operationId": "HealthController_get",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Liveness probe",
+        "tags": [
+          "system"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "Convert API",
+    "description": "Sales and lead management for Ghanaian SMEs. Internal API today; the Pro-tier public API is a versioned subset of these endpoints.",
+    "version": "1.0.0",
+    "contact": {}
+  },
+  "tags": [
+    {
+      "name": "system",
+      "description": "Health and diagnostics"
+    }
+  ],
+  "servers": [
+    {
+      "url": "http://localhost:3001",
+      "description": "local"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "apiKey": {
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "type": "http",
+        "description": "Org-scoped API key (Pro tier)"
+      }
+    },
+    "schemas": {
+      "HealthResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok"
+            ],
+            "example": "ok"
+          },
+          "time": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2026-08-18T12:00:00.000Z"
+          },
+          "version": {
+            "type": "string",
+            "example": "0.0.0"
+          }
+        },
+        "required": [
+          "status",
+          "time",
+          "version"
+        ]
+      },
+      "FieldErrorDto": {
+        "type": "object",
+        "properties": {
+          "field": {
+            "type": "string",
+            "example": "phone"
+          },
+          "message": {
+            "type": "string",
+            "example": "not a valid Ghanaian phone number"
+          }
+        },
+        "required": [
+          "field",
+          "message"
+        ]
+      },
+      "ErrorEnvelopeDto": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "validation_failed",
+              "unauthenticated",
+              "session_expired",
+              "forbidden",
+              "not_found",
+              "conflict",
+              "duplicate_contact",
+              "consent_missing",
+              "conversation_window_closed",
+              "template_not_approved",
+              "entitlement_exceeded",
+              "rate_limited",
+              "provider_unavailable",
+              "provider_rejected",
+              "offline",
+              "internal_error"
+            ],
+            "example": "conversation_window_closed"
+          },
+          "message": {
+            "type": "string",
+            "description": "Technical summary. Do not show this to a user; use the code to pick copy.",
+            "example": "free-form send refused: conversation window closed"
+          },
+          "details": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FieldErrorDto"
+            }
+          },
+          "requestId": {
+            "type": "string",
+            "example": "req-01JBQZ3K7X8V9WQ0R1S2T3V4W5"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ]
+      }
+    }
+  }
+}

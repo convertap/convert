@@ -1,0 +1,22 @@
+# Local Postgres only. Nothing else is stateful by design (ADR 0010 keeps the job
+# queue in Postgres rather than adding Redis).
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: convert-postgres
+    environment:
+      POSTGRES_USER: convert
+      POSTGRES_PASSWORD: convert
+      POSTGRES_DB: convert
+    ports:
+      - '5432:5432'
+    volumes:
+      - convert-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U convert']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  convert-pgdata:

@@ -1,0 +1,25 @@
+{
+  "name": "@convert/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --project unit"
+  },
+  "dependencies": {
+    "@convert/application": "workspace:*",
+    "@convert/contracts": "workspace:*",
+    "@convert/core": "workspace:*",
+    "@convert/infra": "workspace:*",
+    "@nestjs/common": "^11.2.1",
+    "@nestjs/core": "^11.2.1",
+    "@nestjs/platform-fastify": "^11.2.1",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "pg-boss": "^12.27.0"
+  }
+}

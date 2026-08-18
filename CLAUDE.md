@@ -8,10 +8,11 @@ Mobile-first sales & lead management platform for Ghanaian SMEs. Docs, directory
 2. **`docs/product-spec.md`** — full product vision + commercial model, derived from `Convert_Pitch_Deck.pptx`. Reference for intent, not for scope. §12 holds open questions, §13 the deck-vs-scope divergences.
 3. **`docs/pre-development-checklist.md`** — what must be obtained, decided, or proven before implementation starts. IDs (E0–E7, L1–L4, R1–R9, A1–A6, S1–S7, P1–P6) are stable; cite them. §10 is the decision log — record decisions there as they land.
 4. **`docs/architecture.md`** — target architecture. §3 the decided stack, §6 invariants I1–I12, §20 the decisions it still assumes, §21 how the rules are kept.
-5. **`docs/adr/`** — 17 decision records. 0001, 0015, 0016, 0017 Accepted; rest Proposed. Cite by number. Never edit an accepted Decision — supersede it.
+5. **`docs/adr/`** — 18 decision records. 0001 and 0015–0018 Accepted; rest Proposed. Cite by number. Never edit an accepted Decision — supersede it.
 6. **`docs/engineering-guardrails.md`** — layout, the dependency rule, CI gates G1–G13, conventions. With `docs/code-review-checklist.md`, `docs/definition-of-done.md`, `docs/test-strategy.md`.
-7. **`docs/design-system.md`** — shadcn primitives, Convert token tiers, domain tokens for stage/channel/status/window, accessibility and performance rules (ADR 0016).
-8. `C:\Users\SolomonAboagye\Downloads\Convert_Pitch_Deck.pptx` — original source. 12 slides.
+7. **`docs/error-handling.md`** — errors are first class (ADR 0018): one catalogue carrying status, retryability, and the sentence a person reads. Layers below the API throw without logging.
+8. **`docs/design-system.md`** — shadcn primitives, Convert token tiers, domain tokens for stage/channel/status/window, accessibility and performance rules (ADR 0016).
+9. `C:\Users\SolomonAboagye\Downloads\Convert_Pitch_Deck.pptx` — original source. 12 slides.
 
 Do not resolve a scope conflict yourself. If the two docs disagree on something not already in `product-spec.md` §13, add it there and flag it.
 

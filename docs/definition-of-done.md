@@ -12,6 +12,7 @@ Gate G12. A story is not done when the code merges. It is done when a pilot SME 
 - [ ] Acceptance criteria met, all of them, including the ones that were inconvenient.
 - [ ] Works on a 360 px viewport, on a real phone, on a throttled connection — not only in a desktop browser at 1440 px.
 - [ ] Loading, empty, and error states exist. "Empty" gets real attention: a new organization sees every screen empty first, and that is the first impression.
+- [ ] Every error state answers three questions: what happened, what to do now, and whether their work survived (`docs/error-handling.md` section 5).
 - [ ] Nothing half-wired behind a flag without the flag being documented.
 
 **Correct**

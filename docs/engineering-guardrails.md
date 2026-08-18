@@ -155,7 +155,9 @@ No agent or tool co-authorship trailers. Commits carry their human author only.
 
 **Naming.** Domain vocabulary from `architecture.md` §6 and the ubiquitous language in `mvp-scope.md`. A `Lead` is not an `Opportunity`; a `Deal` is not a `Sale`. If the product doc and the code disagree on a word, one of them is a bug.
 
-**Error handling.** One error envelope in `contracts` — stable machine `code`, human `message`, optional field-level `details`. Domain errors are typed classes in `core`; HTTP mapping happens once, in an `api` exception filter. Never leak a driver error to a client.
+**Error handling.** Errors are a first-class part of the product, not a fallback branch (ADR 0018; `docs/error-handling.md` is the working guide).
+
+Every failure is defined once in `packages/contracts/src/errors.ts` with its HTTP status, retryability, whether it is our fault, and **the sentence a person reads**. Domain and use-case failures are typed and carry a code; one exception filter in `api` maps them to the envelope and logs them — layers below throw without logging. Never render `message` to a user; pick copy by code. No silent catch: catch to add context or convert, then rethrow. Nothing internal reaches a client, and every response carries a `requestId`.
 
 **API documentation.** OpenAPI from day one, generated from the code with `@nestjs/swagger` and committed to the repository as `apps/api/openapi.json`. See §6.1.
 

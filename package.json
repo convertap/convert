@@ -1,0 +1,36 @@
+{
+  "name": "convert",
+  "private": true,
+  "packageManager": "pnpm@11.1.1",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=11.0.0"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "typecheck": "pnpm build:packages && turbo run typecheck",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "vitest run --project integration",
+    "db:up": "docker compose up -d postgres",
+    "db:migrate": "pnpm --filter @convert/infra migrate",
+    "db:assert-rls": "pnpm --filter @convert/infra assert:rls",
+    "openapi": "pnpm --filter @convert/api openapi:generate",
+    "guardrails": "python tools/check_boundaries.py && python tools/check_invariant_coverage.py && python tools/check_contrast.py",
+    "format": "prettier --write .",
+    "build:packages": "tsc -b packages/contracts packages/core packages/application packages/infra"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "eslint": "^9.39.5",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.12",
+    "turbo": "^2.10.10",
+    "typescript": "5.9.3",
+    "typescript-eslint": "^8.67.0",
+    "vitest": "^4.1.10",
+    "dotenv": "^17.4.2"
+  }
+}

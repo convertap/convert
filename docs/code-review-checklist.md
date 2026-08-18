@@ -14,7 +14,10 @@ Reviewers: skip any section the diff does not touch. Do not skip §1.
 - [ ] **Principal.** Every new use case takes a `Principal` as its first argument. Nothing reads an ambient session or a global.
 - [ ] **Activity.** A state change a rep would expect to see in the timeline writes an `activity` row, with the acting principal recorded.
 - [ ] **No layer leak.** Domain rules are in `core`, orchestration in `application`, HTTP in `api`, rendering in `web`. A rule in a controller is a finding even when the boundary checker allows it.
-- [ ] **Errors.** Domain failures are typed errors from `core`, mapped once in the `api` exception filter. No driver error, stack trace, or SQL text reaches a client.
+- [ ] **Errors.** Domain failures are typed and carry a code from the catalogue; mapping happens once in the `api` exception filter. No driver error, stack trace, or SQL text reaches a client.
+- [ ] **No silent catch.** Every `catch` rethrows, converts to a typed error, or is justified in the PR body.
+- [ ] **New failure modes have a catalogue entry** with a real user-facing sentence, honest `retryable`, and a status (ADR 0018).
+- [ ] **UI picks error copy by code**, never by rendering `message`.
 
 ## 2. Data model changes
 
