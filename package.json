@@ -20,17 +20,19 @@
     "openapi": "pnpm --filter @convert/api openapi:generate",
     "guardrails": "python tools/check_boundaries.py && python tools/check_invariant_coverage.py && python tools/check_contrast.py",
     "format": "prettier --write .",
-    "build:packages": "tsc -b packages/contracts packages/core packages/application packages/infra"
+    "build:packages": "tsc -b packages/contracts packages/core packages/application packages/infra",
+    "prepare": "lefthook install"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
+    "dotenv": "^17.4.2",
     "eslint": "^9.39.5",
+    "lefthook": "^2.1.10",
     "prettier": "^3.9.6",
     "tsx": "^4.23.12",
     "turbo": "^2.10.10",
     "typescript": "5.9.3",
     "typescript-eslint": "^8.67.0",
-    "vitest": "^4.1.10",
-    "dotenv": "^17.4.2"
+    "vitest": "^4.1.10"
   }
 }

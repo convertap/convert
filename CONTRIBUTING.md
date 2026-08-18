@@ -27,19 +27,23 @@ Run the first one before every push. It takes under a second.
 ```bash
 pnpm install
 pnpm dev                 # web, api, and worker together
-pnpm -r typecheck
-pnpm -r lint
-pnpm -r test
+pnpm typecheck           # builds the workspace packages first, then checks the apps
+pnpm lint
+pnpm test
 pnpm test:integration    # needs a local Postgres
+pnpm guardrails          # boundaries, invariant coverage, token contrast
 ```
 
 ## The loop
 
-1. Branch from `main`: `feat/short-description`, `fix/…`, `refactor/…`.
+1. Branch from `main`: `feat/short-description`, `fix/…`, `refactor/…`. **`main` is protected — nobody pushes to it directly, including administrators.**
 2. Write the test where the logic lives — domain rules in `core` without a database, wiring in integration tests.
-3. Run the boundary checker and the test suite locally.
-4. Sign the checklist in the pull request template yourself, then request review.
-5. One approval from someone who did not write the code. All gates green, none overridden.
+3. Commit. The `commit-msg` hook enforces Conventional Commits and rejects agent co-authorship trailers.
+4. Push. The `pre-push` hook runs the boundary, invariant, and contrast checks.
+5. Open a pull request and sign the checklist in the template yourself.
+6. All four CI jobs green, branch up to date with `main`, conversations resolved. Squash merge; the branch deletes itself.
+
+Approvals are currently set to zero because a solo maintainer cannot approve their own pull request. That rises to one the day a second developer joins — everything else in the protection rules applies from today.
 
 Commits follow Conventional Commits — `feat(core/crm): …` — and carry **no agent or tool co-authorship trailers**.
 
