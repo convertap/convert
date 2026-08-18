@@ -192,7 +192,46 @@ If a PR needs a walkthrough to be understood, it is too big or the code is uncle
 
 ---
 
-## 8. When a guardrail is wrong
+## 8. The git workflow
+
+`main` is protected. Nobody pushes to it, including the maintainer — GitHub enforces
+this for administrators too.
+
+**The loop**
+
+1. Branch: `type/short-description`.
+2. Commit in Conventional Commits form. The `commit-msg` hook checks the shape and
+   rejects agent or tool co-authorship trailers; commits carry their human author only.
+3. Push. The `pre-push` hook runs the boundary, invariant, and contrast checks — the
+   three that need no dependencies and finish in about a second.
+4. Open a pull request. All four CI jobs must pass, the branch must be up to date with
+   `main`, and every review conversation must be resolved.
+5. Squash merge. The branch deletes itself.
+
+**Settings, and why**
+
+| Setting | Value | Reason |
+|---------|-------|--------|
+| Required checks | the four CI jobs | Gates G1–G13 are the merge criteria |
+| Strict (up to date) | on | A green check against stale `main` proves nothing |
+| Administrators | enforced | A rule the owner can skip is a suggestion |
+| Required approvals | 0 | A solo maintainer cannot approve their own PR; `main` would deadlock. Raise to 1 the day a second developer joins |
+| Code-owner review | off | Same reason. Turn on with the approval count |
+| Linear history | on | Squash-only, so history stays readable |
+| Force push / deletion | blocked | — |
+| Conversation resolution | required | Stops review comments being merged past |
+
+The zero-approval setting is the one compromise here, and it is temporary. Everything
+else — checks, up-to-date branches, no direct pushes, no force pushes — applies to
+everyone from today.
+
+**Local hooks** are configured in `lefthook.yml` and installed by `pnpm install`. They
+are a faster copy of what CI enforces, not a substitute: `--no-verify` exists for
+emergencies, and CI still gates the merge.
+
+---
+
+## 9. When a guardrail is wrong
 
 Guardrails encode decisions, and decisions get superseded. The path is: open an ADR that supersedes the old one, change `.boundaries.json` or the gate in the same commit, and say in the PR body which ADR authorises it.
 

@@ -1,0 +1,23 @@
+# Local enforcement. Branch protection covers the server side; these hooks catch the
+# same mistakes before a push, which is faster than waiting on CI.
+#
+# Everything here is stdlib Python, so it works before `pnpm install` has ever run and
+# keeps working if the JavaScript toolchain changes.
+#
+# Install:  pnpm lefthook install     (done automatically by the `prepare` script)
+# Bypass:   git commit --no-verify    (for a genuine emergency; CI still gates the merge)
+
+commit-msg:
+  commands:
+    conventional-commit:
+      run: python tools/check_commit_message.py {1}
+
+pre-push:
+  parallel: true
+  commands:
+    boundaries:
+      run: python tools/check_boundaries.py
+    invariants:
+      run: python tools/check_invariant_coverage.py
+    contrast:
+      run: python tools/check_contrast.py

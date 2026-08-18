@@ -1,0 +1,37 @@
+version: 2
+
+# Grouped and monthly on purpose. A daily stream of individual bumps gets ignored,
+# and ignored update PRs are worse than none: they train the team to skip the queue
+# where a real security advisory will eventually appear.
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      nest:
+        patterns: ['@nestjs/*', 'fastify', '@fastify/*']
+      next:
+        patterns: ['next', 'react', 'react-dom', '@types/react', '@types/react-dom']
+      tooling:
+        patterns: ['typescript', 'eslint', 'typescript-eslint', 'vitest', 'turbo', 'prettier', 'tsx']
+      database:
+        patterns: ['drizzle-orm', 'drizzle-kit', 'pg', '@types/pg', 'pg-boss']
+    ignore:
+      # Pinned deliberately: @nestjs/cli 11 depends on TypeScript 5.9.x, and the Nest
+      # toolchain does not yet support TypeScript 7. Revisit when it does.
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+      day: monday
+    commit-message:
+      prefix: ci

@@ -14,3 +14,4 @@ ignoredBuiltDependencies:
 allowBuilds:
   '@scarf/scarf': false
   esbuild: true
+  lefthook: true
