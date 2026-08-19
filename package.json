@@ -21,7 +21,7 @@
     "guardrails": "python tools/check_boundaries.py && python tools/check_invariant_coverage.py && python tools/check_contrast.py",
     "format": "prettier --write .",
     "build:packages": "tsc -b packages/contracts packages/core packages/application packages/infra",
-    "prepare": "lefthook install"
+    "prepare": "node tools/install-hooks.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
