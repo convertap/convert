@@ -62,7 +62,9 @@ Changing `.boundaries.json`, `ci.yml`, or `engineering-guardrails.md` requires a
 
 ## Notion, and keeping it current
 
-Notion is the stakeholder-facing view (`docs/notion-workspace.md`). Git owns how the
+Notion is the stakeholder-facing view: [Convert workspace](https://app.notion.com/p/3c14771f641e809abeb6ddf613dabc2d), specified in
+`docs/notion-workspace.md`. Reached through the claude.ai connector over OAuth, which is per
+client: run `/mcp` once per machine. Git owns how the
 system works; Notion owns how the work is going. Never fork a document between the two:
 mirror what stakeholders read and link the rest, naming the source commit.
 

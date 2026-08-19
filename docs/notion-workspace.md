@@ -1,6 +1,10 @@
 # Notion workspace
 
-Stakeholder visibility and delivery management. This document is the specification for the workspace: what exists, what each part is for, and which system owns which fact.
+Stakeholder visibility and delivery management. What exists, what each part is for, and which system owns which fact.
+
+**Workspace:** [Convert](https://app.notion.com/p/3c14771f641e809abeb6ddf613dabc2d)
+
+**Status:** Built and populated on 19 August 2026. Backlog is deliberately empty: tickets come out of the product-definition session, because R1 to R3 and R8 determine what the first stories are.
 
 **Last updated:** 2026-08-19
 
@@ -133,14 +137,18 @@ The weekly status is the one a stakeholder actually reads. Four headings, no pro
 
 ---
 
-## 7. Prerequisites before this can be built
+## 7. Access and authentication
 
-The MCP server can create data sources and pages, but only inside content the integration has been given access to. Notion integrations see nothing by default.
+Notion is reached through the **claude.ai Notion connector over OAuth**, not through a token.
 
-1. `NOTION_TOKEN` present in Infisical (`dev`), prefixed `ntn_`.
-2. A parent page created in Notion, named Convert.
-3. The integration connected to that page: open the page, then Connections, then add the integration. Child pages inherit the access.
-4. Claude started with the token injected: `infisical run --env=dev -- claude`.
-5. The `notion` MCP server approved once, on first run.
+The connector is per user **and per client**. Authorising it in the Claude desktop app does not carry to the Claude Code CLI: the CLI reports the connector as connected while exposing only its authentication tools, and a call fails. Each client authorises once by running `/mcp` and selecting `claude.ai Notion`. Because it is OAuth, an agent sees exactly what that Notion account sees, which is the behaviour we want for a stakeholder workspace.
 
-Without step 3 the token authenticates and then finds an empty workspace, which reads like a broken integration rather than a permissions problem.
+A token-based server (`@notionhq/notion-mcp-server` reading `NOTION_TOKEN`) was set up first and then removed. It is the right choice only for unattended work, such as a scheduled job posting the weekly status with no human present, and nothing does that yet. If that changes: add it to a project `.mcp.json` as a stdio server with `${NOTION_TOKEN}`, put the value in Infisical, and launch under `infisical run` (ADR 0020). The register already carries a row for the secret, marked not created yet.
+
+Two properties of the token path worth remembering if it returns. A Notion integration sees nothing by default, so the API returns an empty workspace until someone shares a page with the integration, which looks identical to a broken token. And loading a tool's schema is not the same as the tool working: our stdio server exposed all 24 tools and returned `401 unauthorized` on every call.
+
+## 8. Two things that will bite the next person
+
+**Do not name a database title property `ID`.** The connector reports the property as `userDefined:ID` in the schema, then strips the prefix on write and rejects the request with *Property "ID" not found. Did you mean "userDefined:ID"?* Both spellings fail. The Decisions title column is therefore **Decision ID**, and any new database should avoid `ID` outright.
+
+**Dates take the plain property name.** The SQLite view of a data source shows expanded columns such as `date:Decided on:start`, but `create-pages` expects `Decided on` with an ISO date string.
