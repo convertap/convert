@@ -36,14 +36,18 @@ Every layer directory carries a `README.md` stating what belongs in it, what doe
 
 One direction only. Inner layers never learn about outer ones.
 
+```mermaid
+flowchart LR
+  WEB["web"] --> CONTRACTS["contracts"]
+  API["api"] --> APP["application"]
+  WORKER["worker"] --> APP
+  APP --> CORE["core"]
+  CORE --> CONTRACTS
+  INFRA["infra"] --> CORE
 ```
-web ──────► contracts
-api ──────► application ──► core ──► contracts
-worker ───► application ──► core ──► contracts
-infra ────► core ──► contracts
-                     ▲
-        composition roots wire infra into api/worker
-```
+
+`api` and `worker` are the composition roots: the only places allowed to wire `infra` into the
+graph above.
 
 | Layer | May import | Notably may **not** |
 |-------|-----------|---------------------|
@@ -90,6 +94,7 @@ Two kinds. A machine gate blocks the merge; a human gate is a checklist line som
 | G12 | Definition of Done met | human | story closure |
 | G13 | Design token contrast meets WCAG in the shipped theme | machine | merge |
 | G14 | No secret in the staged diff or in git history | machine | merge |
+| G15 | Every Notion page derived from these documents is current, or the drift is acknowledged | machine | merge |
 
 G6 and G7 are the two most easily skipped and the two that matter most. G6 turns the architecture into tests that fail when someone contradicts it. G7 is the difference between multi-tenancy and a data breach with a plausible-looking query.
 
