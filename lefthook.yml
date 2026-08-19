@@ -28,3 +28,6 @@ pre-push:
       run: python tools/check_invariant_coverage.py
     contrast:
       run: python tools/check_contrast.py
+    notion-mirror:
+      # G15. No network access, so it is as cheap locally as the others.
+      run: python tools/check_notion_mirror.py

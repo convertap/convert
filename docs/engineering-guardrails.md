@@ -36,14 +36,18 @@ Every layer directory carries a `README.md` stating what belongs in it, what doe
 
 One direction only. Inner layers never learn about outer ones.
 
+```mermaid
+flowchart LR
+  WEB["web"] --> CONTRACTS["contracts"]
+  API["api"] --> APP["application"]
+  WORKER["worker"] --> APP
+  APP --> CORE["core"]
+  CORE --> CONTRACTS
+  INFRA["infra"] --> CORE
 ```
-web ──────► contracts
-api ──────► application ──► core ──► contracts
-worker ───► application ──► core ──► contracts
-infra ────► core ──► contracts
-                     ▲
-        composition roots wire infra into api/worker
-```
+
+`api` and `worker` are the composition roots: the only places allowed to wire `infra` into the
+graph above.
 
 | Layer | May import | Notably may **not** |
 |-------|-----------|---------------------|
@@ -90,6 +94,7 @@ Two kinds. A machine gate blocks the merge; a human gate is a checklist line som
 | G12 | Definition of Done met | human | story closure |
 | G13 | Design token contrast meets WCAG in the shipped theme | machine | merge |
 | G14 | No secret in the staged diff or in git history | machine | merge |
+| G15 | Every Notion page derived from these documents is current, or the drift is acknowledged | machine | merge |
 
 G6 and G7 are the two most easily skipped and the two that matter most. G6 turns the architecture into tests that fail when someone contradicts it. G7 is the difference between multi-tenancy and a data breach with a plausible-looking query.
 
@@ -205,8 +210,8 @@ this for administrators too.
 1. Branch: `type/short-description`.
 2. Commit in Conventional Commits form. The `commit-msg` hook checks the shape and
    rejects agent or tool co-authorship trailers; commits carry their human author only.
-3. Push. The `pre-push` hook runs the boundary, invariant, and contrast checks, the
-   three that need no dependencies and finish in about a second.
+3. Push. The `pre-push` hook runs the boundary, invariant, contrast, and Notion-mirror
+   checks, the four that need no dependencies and finish in about a second.
 4. Open a pull request. All four CI jobs must pass, the branch must be up to date with
    `main`, and every review conversation must be resolved.
 5. Squash merge. The branch deletes itself.
@@ -215,7 +220,7 @@ this for administrators too.
 
 | Setting | Value | Reason |
 |---------|-------|--------|
-| Required checks | the four CI jobs | Gates G1–G13 are the merge criteria |
+| Required checks | the four CI jobs, **by exact job name** | Gates G1–G15 are the merge criteria |
 | Strict (up to date) | on | A green check against stale `main` proves nothing |
 | Administrators | enforced | A rule the owner can skip is a suggestion |
 | Required approvals | 0 | A solo maintainer cannot approve their own PR; `main` would deadlock. Raise to 1 the day a second developer joins |
@@ -227,6 +232,21 @@ this for administrators too.
 The zero-approval setting is the one compromise here, and it is temporary. Everything
 else, checks, up-to-date branches, no direct pushes, no force pushes, applies to
 everyone from today.
+
+**A job name in `ci.yml` is the identifier branch protection matches on.** Renaming a job
+silently stops the required check from ever reporting, and the pull request becomes
+unmergeable with every visible check green, which reads as a GitHub fault rather than as
+our own edit. Rename a job and update the required contexts in the same sitting:
+
+```bash
+gh api repos/convertap/convert/branches/main/protection/required_status_checks \
+  --jq '{strict, contexts}'          # read the current contract before changing a name
+```
+
+The trap fires in both directions: passing `-f strict=false` where the API wants a boolean
+is rejected outright, but `-F strict=false` is accepted and quietly turns off the
+up-to-date requirement documented above. Read the response back rather than trusting the
+call.
 
 **Local hooks** are configured in `lefthook.yml` and installed by `pnpm install`. They
 are a faster copy of what CI enforces, not a substitute: `--no-verify` exists for

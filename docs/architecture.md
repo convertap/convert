@@ -177,6 +177,38 @@ erDiagram
   ORGANIZATION ||--o{ OUTBOX_EVENT : emits
 ```
 
+### The two state machines
+
+Separate on purpose. The pitch deck showed one list of stages; merging them loses the
+distinction between "is this worth my time" and "how close is this to money", and a report built
+on the merged version cannot say whether the problem is lead quality or closing ability.
+
+A lead is chased:
+
+```mermaid
+flowchart LR
+  A["New"] --> B["Contacted"]
+  B --> C["Qualified"]
+  C --> D["Converted"]
+  A --> E["Lost"]
+  B --> E
+  C --> E
+```
+
+A deal is worked:
+
+```mermaid
+flowchart LR
+  A["New"] --> B["Contacted"]
+  B --> C["Qualified"]
+  C --> D["Proposal"]
+  D --> E["Won"]
+  D --> F["Lost"]
+```
+
+`Converted` requires a linked deal and `Lost` requires a reason (I4). Deal outcomes are terminal:
+reopening creates a new deal rather than reviving the old one (I5).
+
 ### Entities beyond scope §24, and why each exists
 
 | Entity | Reason |
@@ -227,11 +259,12 @@ Three layers, each catching what the one above misses.
 
 ### Principals **[DECIDE A6]**
 
-```
-Principal
-├── UserPrincipal   (session; org_id, user_id, role)
-├── ClientPrincipal (API key; org_id, client_id, scopes)   ← Pro tier, deferred
-└── SystemPrincipal (worker; org_id, no interactive rights)
+```mermaid
+flowchart TD
+  P["Principal"]
+  P --> U["UserPrincipal<br/>session: org_id, user_id, role"]
+  P --> C["ClientPrincipal<br/>API key: org_id, client_id, scopes<br/>Pro tier, deferred"]
+  P --> S["SystemPrincipal<br/>worker: org_id, no interactive rights"]
 ```
 
 Every service method takes a principal. Every activity and audit row records which kind acted. Doing this on day one is what makes C5 cheap; skipping it is what makes it a rewrite. The worker being a first-class principal also means "the system sent this reminder" is attributable in the timeline, which matters for pilot support.
@@ -407,15 +440,12 @@ The pilot's real purpose is learning. If activation (10 contacts + 1 deal in 7 d
 
 ## 17. Deployment topology
 
-```
-┌──────────────┐      ┌──────────────┐   ┌──────────────┐
-│ web (Next)   │─────▶│ api (Nest)   │   │ worker (Nest)│
-│ BFF, session │ http │ + webhooks   │   │ jobs         │
-└──────────────┘      └──────┬───────┘   └──────┬───────┘
-                             └──────┬───────────┘
-                              ┌─────▼─────┐
-                              │ PostgreSQL│  managed, PITR backups,
-                              └───────────┘  read replica only if measured
+```mermaid
+flowchart TD
+  WEB["web (Next)<br/>BFF, session"] -->|http| API["api (Nest)<br/>+ webhooks"]
+  WRK["worker (Nest)<br/>jobs"]
+  API --> DB[("PostgreSQL<br/>managed, PITR backups<br/>read replica only if measured")]
+  WRK --> DB
 ```
 
 - Three processes, one repository, one migration path. All in the same region (§3). `api` and `worker` build from the same image with different entrypoints; `web` is its own build.

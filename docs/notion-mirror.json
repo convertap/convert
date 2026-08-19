@@ -1,0 +1,143 @@
+{
+  "comment": "Which Notion pages are derived from this repository, and what they are derived from. Gate G15 compares the hash below against the working tree, so drift is caught without network access. `pending: true` means the page has never been machine-published and the gate reports it without failing. See docs/notion-workspace.md section 9 and ADR 0021.",
+  "workspace": "https://app.notion.com/p/3c14771f641e809abeb6ddf613dabc2d",
+  "mirrors": [
+    {
+      "title": "Architecture diagrams",
+      "page": "3c14771f-641e-8125-9556-edd7fe36351c",
+      "kind": "verbatim",
+      "why": "Engineer-facing diagrams, published so nobody has to clone a repository to see the shape of the system. No human writes on this page.",
+      "diagrams": [
+        {
+          "file": "docs/architecture.md",
+          "section": "## 5. Module map",
+          "block": 0,
+          "page_block": 0
+        },
+        {
+          "file": "docs/engineering-guardrails.md",
+          "section": "## 2. The dependency rule",
+          "block": 0,
+          "page_block": 1
+        },
+        {
+          "file": "docs/architecture.md",
+          "section": "## 17. Deployment topology",
+          "block": 0,
+          "page_block": 2
+        },
+        {
+          "file": "docs/architecture.md",
+          "section": "### Principals **[DECIDE A6]**",
+          "block": 0,
+          "page_block": 3
+        }
+      ],
+      "hash": null,
+      "pending": true
+    },
+    {
+      "title": "Domain model and vocabulary: state machines",
+      "page": "3c14771f-641e-81d2-9f82-e2b52dd10502",
+      "kind": "verbatim",
+      "why": "The lead and deal state machines are the same graph for both audiences, so there is nothing to simplify. The rest of that page, including the simplified ERD and the vocabulary table, is editorial and the pusher never touches it.",
+      "diagrams": [
+        {
+          "file": "docs/architecture.md",
+          "section": "### The two state machines",
+          "block": 0,
+          "page_block": 1
+        },
+        {
+          "file": "docs/architecture.md",
+          "section": "### The two state machines",
+          "block": 1,
+          "page_block": 2
+        }
+      ],
+      "hash": null,
+      "pending": true
+    },
+    {
+      "title": "How the system fits together",
+      "page": "3c14771f-641e-8116-82c9-cece99fdd0fe",
+      "kind": "editorial",
+      "why": "A rewrite for a non-engineering reader: the context diagram is redrawn around people rather than processes, and the invariants become three plain-language properties. Cannot be generated from the source.",
+      "sources": [
+        {
+          "file": "docs/architecture.md",
+          "section": "## 4. System context"
+        },
+        {
+          "file": "docs/architecture.md",
+          "section": "## 17. Deployment topology"
+        },
+        {
+          "file": "docs/architecture.md",
+          "section": "## 18. Performance budget (C1, S2)"
+        }
+      ],
+      "hash": "b71d03c76b724c30"
+    },
+    {
+      "title": "Domain model and vocabulary: ERD and words",
+      "page": "3c14771f-641e-81d2-9f82-e2b52dd10502",
+      "kind": "editorial",
+      "why": "The published ERD is a deliberate subset of the real one: no api_client, no outbox_event, no provider_event, because those answer engineering questions and would only confuse the vocabulary conversation.",
+      "sources": [
+        {
+          "file": "docs/architecture.md",
+          "section": "## 6. Domain model"
+        }
+      ],
+      "hash": "5631cead27af8d44"
+    },
+    {
+      "title": "What we are building",
+      "page": "3c14771f-641e-81d4-b201-c1e7711f1b0a",
+      "kind": "editorial",
+      "why": "Stakeholder-readable mirror of the scope. Reordered around what a person can do rather than around product areas.",
+      "sources": [
+        {
+          "file": "docs/mvp-scope.md",
+          "section": "## 19. MVP Product Areas"
+        },
+        {
+          "file": "docs/mvp-scope.md",
+          "section": "## 20. Out of Scope for Initial MVP"
+        },
+        {
+          "file": "docs/mvp-scope.md",
+          "section": "## 21. Deferred Product Capabilities"
+        }
+      ],
+      "hash": "3303898f31daaae9"
+    },
+    {
+      "title": "Deck vs reality",
+      "page": "3c14771f-641e-8137-a477-e67f5b9d5b1d",
+      "kind": "editorial",
+      "why": "The ten divergences between what the pitch deck promises and what the first release ships. The single most expensive page to let go stale, because a stakeholder who reads only the deck holds expectations the release will not meet.",
+      "sources": [
+        {
+          "file": "docs/product-spec.md",
+          "section": "## 13. Deck vs. MVP Scope Reconciliation"
+        }
+      ],
+      "hash": "b226ce08951dc413"
+    },
+    {
+      "title": "Open product questions",
+      "page": "3c14771f-641e-8191-bd1e-c577234c749e",
+      "kind": "editorial",
+      "why": "Mirror of the open questions, phrased for the people who can answer them rather than for the engineer who raised them.",
+      "sources": [
+        {
+          "file": "docs/product-spec.md",
+          "section": "## 12. Open Questions"
+        }
+      ],
+      "hash": "f59bca2738038433"
+    }
+  ]
+}

@@ -37,7 +37,8 @@ Gate G12. A story is not done when the code merges. It is done when a pilot SME 
 **Reviewed**
 - [ ] All CI gates green, none skipped or overridden.
 - [ ] `docs/code-review-checklist.md` signed by someone who did not write the code.
-- [ ] Notion updated: Backlog row moved, and any decision this story settled recorded in Decisions (`docs/notion-workspace.md` section 6).
+- [ ] Notion updated: Backlog row moved, and any decision this story settled recorded in Decisions (`docs/notion-workspace.md` section 7).
+- [ ] G15 green. If this story changed a mirrored document, the Notion page reads correctly again and `docs/notion-mirror.json` says so.
 
 ---
 

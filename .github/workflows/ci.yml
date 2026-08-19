@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   guardrails:
-    name: G1-G2 boundaries and ADR discipline
+    name: G1-G2 boundaries and ADR discipline, G14-G15 secrets and mirror
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,6 +34,11 @@ jobs:
       - name: Check ADR discipline
         if: github.event_name == 'pull_request'
         run: python tools/check_adr_discipline.py --base origin/${{ github.base_ref }}
+
+      # G15 - the Notion mirror. No network access: this compares the manifest
+      # against the working tree, so it needs no token and cannot flake.
+      - name: G15 Notion mirror is current
+        run: python tools/check_notion_mirror.py
 
       # G14 - secret scanning. The repository is public, so a leaked credential is
       # public the moment it lands. Runs on history, not just the diff, because a
