@@ -7,6 +7,13 @@
 # Install:  pnpm lefthook install     (done automatically by the `prepare` script)
 # Bypass:   git commit --no-verify    (for a genuine emergency; CI still gates the merge)
 
+pre-commit:
+  commands:
+    secrets:
+      # Catches a credential while it is still staged. Once it is committed it is in
+      # history, and rewriting shared history costs far more than this check.
+      run: infisical scan git-changes --staged --redact
+
 commit-msg:
   commands:
     conventional-commit:

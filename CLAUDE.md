@@ -63,4 +63,5 @@ Changing `.boundaries.json`, `ci.yml`, or `engineering-guardrails.md` requires a
 
 - Docs live in `docs/`, kebab-case filenames, `##` for top-level sections.
 - Update the `Last updated` line when editing a doc.
+- Secrets come from Infisical, never a file: `infisical run --env=dev -- <command>` (ADR 0020).
 - Conventional Commits. **No agent or tool co-authorship trailers**, commits carry their human author only.

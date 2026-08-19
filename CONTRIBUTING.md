@@ -22,6 +22,24 @@ python tools/check_invariant_coverage.py     # every invariant has a test (gate 
 
 Run the first one before every push. It takes under a second.
 
+## Secrets
+
+Infisical holds them; nothing lives in a file (ADR 0020). Once per machine:
+
+```bash
+infisical login
+infisical init           # links this directory to the Infisical project
+```
+
+Then prefix anything that needs a secret:
+
+```bash
+infisical run --env=dev -- pnpm dev
+infisical run --env=dev -- claude    # so the Notion MCP server inherits NOTION_TOKEN
+```
+
+Forgetting the prefix produces a missing-variable error rather than an obvious "you forgot the wrapper", so check for it first when a process cannot find its configuration. If you need to work offline, `infisical export --env=dev > .env.local` and delete the file afterwards. `.gitignore` blocks it, and the `pre-commit` hook scans staged changes for credentials regardless.
+
 ## Once the workspace exists
 
 ```bash

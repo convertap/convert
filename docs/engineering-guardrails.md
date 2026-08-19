@@ -89,6 +89,7 @@ Two kinds. A machine gate blocks the merge; a human gate is a checklist line som
 | G11 | Review checklist signed | human | merge |
 | G12 | Definition of Done met | human | story closure |
 | G13 | Design token contrast meets WCAG in the shipped theme | machine | merge |
+| G14 | No secret in the staged diff or in git history | machine | merge |
 
 G6 and G7 are the two most easily skipped and the two that matter most. G6 turns the architecture into tests that fail when someone contradicts it. G7 is the difference between multi-tenancy and a data breach with a plausible-looking query.
 
@@ -132,6 +133,8 @@ Each of these has bitten similar products. They are here because a reviewer need
 **Phone numbers.** Normalize to E.164 on write, in one function, used by writes *and* by search. A rep typing `024…` must find a contact stored as `+23324…`.
 
 **Append-only history.** `activity` takes inserts only. Corrections are new rows. Withhold `UPDATE`/`DELETE` grants at the database level so the rule survives a well-meaning ORM call.
+
+**Secrets.** Infisical holds every non-public value, and processes get them by injection: `infisical run --env=dev -- pnpm dev` (ADR 0020). `.env.example` names the variables and holds no values. A credential never reaches a file that git can see. Scanning is a gate rather than a habit: staged changes at commit time, full history in CI, both redacted so a finding is not itself printed into a public log.
 
 **Idempotency.** Every job carries a dedupe key. Every webhook handler stores the raw provider event first, keyed on the provider's ID, and stops on duplicate. Provider retries are normal traffic.
 

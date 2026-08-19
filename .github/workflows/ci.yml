@@ -35,6 +35,17 @@ jobs:
         if: github.event_name == 'pull_request'
         run: python tools/check_adr_discipline.py --base origin/${{ github.base_ref }}
 
+      # G14 - secret scanning. The repository is public, so a leaked credential is
+      # public the moment it lands. Runs on history, not just the diff, because a
+      # rewritten branch can carry an older commit in.
+      - name: G14 secret scan
+        run: |
+          curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | sudo -E bash
+          sudo apt-get install -y infisical
+          # --redact matters on a public repository: without it a detected secret
+          # gets printed into a world-readable build log, which is the leak.
+          infisical scan --redact --exit-code=1
+
   quality:
     name: G3-G6 types, lint, tests, invariants
     runs-on: ubuntu-latest

@@ -25,6 +25,7 @@ One file per decision. Numbered, immutable once accepted, superseded rather than
 | [0017](./0017-drizzle-as-the-query-layer.md) | Drizzle as the query layer and migration tool | Accepted |
 | [0018](./0018-errors-are-first-class.md) | Errors are a first-class part of the product | Accepted |
 | [0019](./0019-protected-main-with-pull-request-only-changes.md) | Protected main, pull-request-only changes, and local hooks | Accepted |
+| [0020](./0020-infisical-as-the-secret-store.md) | Infisical as the secret store, with secrets injected rather than filed | Accepted |
 
 Statuses: **Proposed** (written, not yet ratified) · **Accepted** (in force) · **Superseded** (replaced, kept for the record) · **Rejected** (considered and declined, kept so it is not re-litigated).
 
