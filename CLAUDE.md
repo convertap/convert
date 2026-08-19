@@ -1,6 +1,6 @@
 # Convert. SME Leads Platform
 
-Mobile-first sales & lead management platform for Ghanaian SMEs. Docs, directory skeleton, design tokens, and guardrails exist; the workspace is not scaffolded yet.
+Mobile-first sales & lead management platform for Ghanaian SMEs. The workspace is scaffolded and the API boots; no feature code exists yet, because the product rules that shape the schema are still open (R1–R3, R8).
 
 ## Documents and precedence
 
@@ -39,7 +39,25 @@ WhatsApp integration depth. Meta test credentials, Meta Cloud API direct, third-
 
 Decided 2026-08-18 (S1, ADR 0001): **Next.js** web · **NestJS on the Fastify adapter** api · **NestJS standalone** worker · **PostgreSQL 16** with **Drizzle** (ADR 0017) · pnpm monorepo · Postgres-backed job queue (ADR 0010) · OpenAPI generated and committed from the first endpoint (S7, ADR 0015).
 
-Not yet scaffolded, no `package.json` yet. The directory skeleton, boundary rules, and guardrails exist; the workspace scaffold is the next task.
+**Scaffolded.** pnpm workspace with Turborepo: `apps/api`, `apps/web`, `apps/worker`, and
+`packages/contracts`, `core`, `application`, `infra`. The API boots and serves Swagger. Twelve
+invariant tests pass. Guardrails G1–G15 run in CI and four of them run before every push.
+
+**What is deliberately not built.** `packages/infra/src/db/schema.ts` holds `organization` and
+nothing else, and `TENANT_TABLES` is an empty array. There are no migrations. That is not an
+oversight: R1, R2, R3 and R8 decide the shape of contact, lead and deal, and guessing them means
+building the schema twice.
+
+**Three gates therefore currently pass without checking anything.** Say so rather than reporting a
+green tick:
+
+| Gate | Why it is vacuous today | Real when |
+|------|-------------------------|-----------|
+| G7 migrations and RLS | No migrations exist, so the job's detect step skips it. `TENANT_TABLES` is empty, so the RLS assertion iterates over nothing | the first tenant table lands |
+| G8 integration tests | `tests/integration/` holds only `.gitkeep` | there is a repository to test against real Postgres |
+| G9 performance budget | `apps/web` is a placeholder page, so the budget is trivially met | the pipeline and contact screens exist |
+
+G1–G6 and G13–G15 are doing real work today.
 
 Hard constraint: **web, api, and Postgres deploy to the same region.** Every render is web → api → db, so a split deployment costs two intercontinental round trips against a 2.5 s LCP budget. Rules out edge-only hosting.
 
