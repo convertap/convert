@@ -23,6 +23,11 @@ build/
 # Turbo's local build cache. Machine-specific and useless to anyone else: 60 files and
 # 2.4 MB of it had been committed, including .tar.zst archives of build output.
 .turbo/
+
+# Railway's infrastructure-as-code scaffold. Its CLI cannot read it on Windows: it
+# appends ?namespace=... to a raw Windows path instead of a file:// URL, so `railway
+# config plan` and `pull` both fail to import. Service settings live in the Railway
+# dashboard until that is fixed upstream. See ADR 0022.
 out/
 *.tsbuildinfo
 
