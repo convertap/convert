@@ -1,0 +1,20 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "buildCommand": "pnpm turbo run build --filter=@convert/api",
+    "watchPatterns": [
+      "/apps/api/**",
+      "/packages/**",
+      "/pnpm-lock.yaml",
+      "/turbo.json",
+      "/tsconfig.base.json"
+    ]
+  },
+  "deploy": {
+    "startCommand": "pnpm --filter @convert/api start",
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 30,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3
+  }
+}
