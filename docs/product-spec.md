@@ -1,4 +1,4 @@
-# Convert — Product Specification
+# Convert. Product Specification
 
 **Tagline:** From lead to sale, in one place.
 
@@ -21,16 +21,16 @@ SME selling in Ghana is effective but fragmented. Four distinct failures:
 | P1 | Leads fall through the cracks | Leads arrive via WhatsApp, Instagram DMs, Facebook ads, and walk-ins with nothing tying them together. Follow-ups get missed and deals go cold. |
 | P2 | Marketing spend is a black box | Owners cannot tell which channel (Facebook ads, flyers, radio, referrals) actually produces paying customers. |
 | P3 | The business lives in one phone | Sales activity sits in an individual rep's phone. When that rep is busy, sick, or leaves, the relationship history leaves with them. |
-| P4 | Existing CRMs don't fit | US/EU tools are email-first, card-payment-first, and priced in USD — a poor fit for cash-and-mobile-money, WhatsApp-first SME selling. |
+| P4 | Existing CRMs don't fit | US/EU tools are email-first, card-payment-first, and priced in USD, a poor fit for cash-and-mobile-money, WhatsApp-first SME selling. |
 
 ### Design constraints implied by the problem
 
 These are non-negotiable product constraints, not preferences:
 
-1. **WhatsApp-first communication** — the primary channel, not an integration bolted on the side.
-2. **Mobile connectivity** — reps work from phones on variable networks.
-3. **Cash and mobile-money payments** — both for customer transactions and for the Convert subscription itself.
-4. **Small teams wearing multiple hats** — the same person markets, sells, and invoices; the UI cannot assume role specialization.
+1. **WhatsApp-first communication**. The primary channel, not an integration bolted on the side.
+2. **Mobile connectivity**. Reps work from phones on variable networks.
+3. **Cash and mobile-money payments**. Both for customer transactions and for the Convert subscription itself.
+4. **Small teams wearing multiple hats**. The same person markets, sells, and invoices; the UI cannot assume role specialization.
 
 ---
 
@@ -61,7 +61,7 @@ Five steps forming one continuous loop. Each step maps to a product surface.
 | 4 | **Close** | Quotes and invoices are generated from the deal record and sent to the customer. Payment status is tracked. |
 | 5 | **Learn** | Dashboards show which marketing source produced the most paying customers, so spend shifts toward what works. |
 
-Step 5 feeds step 1: attribution data changes where the next leads come from. Source tagging at capture is therefore load-bearing for the entire loop — if capture does not reliably record source, the Learn step produces nothing.
+Step 5 feeds step 1: attribution data changes where the next leads come from. Source tagging at capture is therefore load-bearing for the entire loop. If capture does not reliably record source, the Learn step produces nothing.
 
 ---
 
@@ -69,19 +69,19 @@ Step 5 feeds step 1: attribution data changes where the next leads come from. So
 
 Three personas, one shared pain: lost follow-up.
 
-### Persona A — The Solo Hustler
+### Persona A. The Solo Hustler
 - **Who:** Boutique retailer; home-based food or beauty brand.
 - **Core pain:** Leads come in on WhatsApp/Instagram DMs and get lost. No follow-up system at all.
 - **Team size:** 1.
 - **Expected plan:** Starter.
 
-### Persona B — The Growing Team
+### Persona B. The Growing Team
 - **Who:** Small distributor; service business with 2–5 reps.
 - **Core pain:** No shared view of who is talking to which customer. Deals stall silently.
 - **Team size:** 2–5.
 - **Expected plan:** Growth.
 
-### Persona C — The Ambitious SME
+### Persona C. The Ambitious SME
 - **Who:** Established SME scaling its sales function.
 - **Core pain:** Marketing spend is not tracked against sales closed. Reporting is manual.
 - **Team size:** Dedicated sales team.
@@ -99,10 +99,10 @@ Eight modules. Entitlements scale from solo operator to sales team.
 | Contact & Deal Pipeline | Kanban: New → Contacted → Qualified → Proposal → Won/Lost | 100 contacts | 1,000 contacts | Unlimited |
 | WhatsApp & SMS Campaigns | Bulk broadcast, templates, scheduled follow-ups | 50 / mo | 1,000 / mo | 5,000 / mo |
 | Sales Tasks & Reminders | Auto follow-ups, call logging, next-action nudges | ✅ | ✅ | ✅ |
-| Quotes & Invoices | Generate and send; track payment status | — | ✅ | ✅ |
+| Quotes & Invoices | Generate and send; track payment status | no | ✅ | ✅ |
 | Campaign Analytics | Cost-per-lead, response rate, conversion-by-source | Basic | Full | Full |
 | Team Seats | Reps sharing one pipeline | 1 | 3 | 10 |
-| API / Integrations | Accounting, e-commerce, and other business tools | — | — | ✅ |
+| API / Integrations | Accounting, e-commerce, and other business tools | no | no | ✅ |
 
 ### Entitlement rules to implement
 
@@ -122,13 +122,13 @@ Whether stages are user-editable is not specified in the deck.
 
 ## 6. Differentiation
 
-Positioning: not a global CRM squeezed to fit — built local from day one.
+Positioning: not a global CRM squeezed to fit, built local from day one.
 
 | Claim | Substance |
 |-------|-----------|
 | WhatsApp-native, not email-native | The channel Ghanaian customers and businesses actually use, built into the core workflow. |
 | Priced and billed in GHS | Mobile money is a first-class payment method for the subscription itself. No USD friction. |
-| Mobile-first for reps who sell from their phone | Not a desktop tool retrofitted with a mobile app — built for the phone from day one. |
+| Mobile-first for reps who sell from their phone | Not a desktop tool retrofitted with a mobile app, built for the phone from day one. |
 | Marketing and sales in one system | ROI per channel is visible without manual reconciliation between separate tools. |
 
 ---
@@ -159,9 +159,9 @@ Monthly, no long-term lock-in, with an annual discount. Priced to match SME cash
 
 Seeded from an existing network, not a cold start. Three motions:
 
-1. **Early pilot cohort** — recruit a small group of early-adopter SMEs as pilot customers to validate the product and gather testimonials.
-2. **Partner-led distribution** — partner with fintech and telecom providers already serving SMEs, reaching customers who already use digital tools. MTN Enterprise is named in the ask as the first target.
-3. **Community-led growth** — WhatsApp groups, trade associations, and market queen/leader networks drive word-of-mouth adoption.
+1. **Early pilot cohort**. Recruit a small group of early-adopter SMEs as pilot customers to validate the product and gather testimonials.
+2. **Partner-led distribution**. Partner with fintech and telecom providers already serving SMEs, reaching customers who already use digital tools. MTN Enterprise is named in the ask as the first target.
+3. **Community-led growth**. WhatsApp groups, trade associations, and market queen/leader networks drive word-of-mouth adoption.
 
 ---
 
@@ -169,19 +169,19 @@ Seeded from an existing network, not a cold start. Three motions:
 
 Three phases, twelve months to a full sales stack.
 
-### Phase 1 — MVP (Months 1–3)
+### Phase 1. MVP (Months 1–3)
 - Lead capture
 - Contact and deal pipeline
 - WhatsApp/SMS campaigns
 - Mobile-first UI
 
-### Phase 2 — Sales Ops (Months 4–6)
+### Phase 2. Sales Ops (Months 4–6)
 - Quotes and invoices
 - Task automation
 - Campaign analytics
 - Team seats
 
-### Phase 3 — Scale (Months 7–12)
+### Phase 3. Scale (Months 7–12)
 - API integrations
 - Payment collection
 - AI lead scoring
@@ -189,7 +189,7 @@ Three phases, twelve months to a full sales stack.
 
 ### Note on scope sequencing
 
-Phase 1 delivers the Capture → Organize → Engage arc of the core loop. Close and Learn arrive in Phase 2. The pricing table describes the full Phase-2 product, so Starter/Growth/Pro as specified are not all sellable at end of Phase 1 — the Quotes & Invoices gate and Campaign Analytics tiers are the differentiators between Starter and Growth, and both are Phase 2. How pilot-cohort billing works during Phase 1 is an open question.
+Phase 1 delivers the Capture → Organize → Engage arc of the core loop. Close and Learn arrive in Phase 2. The pricing table describes the full Phase-2 product, so Starter/Growth/Pro as specified are not all sellable at end of Phase 1. The Quotes & Invoices gate and Campaign Analytics tiers are the differentiators between Starter and Growth, and both are Phase 2. How pilot-cohort billing works during Phase 1 is an open question.
 
 ---
 
@@ -202,7 +202,7 @@ Phase 1 delivers the Capture → Organize → Engage arc of the core loop. Close
 | Expansion | % of Starter accounts upgrading to Growth within 3 months | Not specified |
 | Outcome proof | Average increase in lead response rate and deals closed per rep, tracked per cohort | Not specified |
 
-Activation is the only metric with a fully specified event definition (10+ contacts AND 1+ deal, within 7 days of signup) — instrument it first.
+Activation is the only metric with a fully specified event definition (10+ contacts AND 1+ deal, within 7 days of signup), instrument it first.
 
 ---
 
@@ -210,7 +210,7 @@ Activation is the only metric with a fully specified event definition (10+ conta
 
 Three decisions requested:
 
-1. Greenlight the Phase 1 MVP build — 3-month scope, already defined.
+1. Greenlight the Phase 1 MVP build, 3-month scope, already defined.
 2. Confirm an initial pilot cohort of SME customers.
 3. Align with MTN Enterprise on a partner-led distribution pilot.
 
@@ -229,7 +229,7 @@ Gaps in the deck. Items resolved by [`mvp-scope.md`](./mvp-scope.md) are marked 
 
 ### Blocks pricing / packaging
 
-None of these block the MVP build — no billing is in MVP scope — but all block commercial launch.
+None of these block the MVP build, no billing is in MVP scope, but all block commercial launch.
 
 - Basic vs. Full split for Campaign Analytics.
 - Message-bundle add-on pricing and whether unused monthly allowance rolls over.
@@ -238,20 +238,20 @@ None of these block the MVP build — no billing is in MVP scope — but all blo
 - How the pilot cohort is billed, given the MVP ships neither billing nor the Growth-tier differentiators.
 
 ### Blocks the attribution promise (P2)
-- **[PARTIALLY RESOLVED] Attribution depth.** The MVP ships basic source tracking and "leads by source" only (`mvp-scope.md` §15); complex marketing attribution and cost-per-lead reporting are explicitly out of scope (§20, §21). This means **problem P2 — marketing spend is a black box — is not solved by the MVP.** The MVP answers "where did leads come from," not "which spend produced paying customers."
+- **[PARTIALLY RESOLVED] Attribution depth.** The MVP ships basic source tracking and "leads by source" only (`mvp-scope.md` §15); complex marketing attribution and cost-per-lead reporting are explicitly out of scope (§20, §21). This means **problem P2, marketing spend is a black box, is not solved by the MVP.** The MVP answers "where did leads come from," not "which spend produced paying customers."
 - **Ad-spend input.** Still open, deferred with cost-per-lead. Requires a decision on whether spend is pulled from Facebook/Instagram ad APIs or entered manually. Offline channels named in the problem (flyers, radio, referrals, walk-ins) have no API and need manual entry to appear in ROI at all.
 - **Attribution model.** Still open: first-touch, last-touch, or multi-touch, and how a walk-in acquires a source.
 
 ### Absent from the deck entirely
 
-Not gaps in this document — gaps in the pitch. Each is a question an investor or a partner will ask.
+Not gaps in this document. Gaps in the pitch. Each is a question an investor or a partner will ask.
 
-- **Market sizing** — SME count, addressable segment, reachable segment.
+- **Market sizing**. SME count, addressable segment, reachable segment.
 - **Named competitors and their pricing.** The deck argues against "US/EU tools" generically but names no local or regional incumbent.
-- **Unit economics** — CAC, payback period, gross margin per tier.
+- **Unit economics**. CAC, payback period, gross margin per tier.
 - **Team and hiring plan.**
 - **Budget** for the 3-month Phase 1 build.
-- **Data protection compliance.** Ghana Data Protection Act obligations for storing customer contact data and message history. Relevant from the first pilot, not later — pilot SMEs will upload real customer phone numbers. Now tracked as checklist items L1–L4.
+- **Data protection compliance.** Ghana Data Protection Act obligations for storing customer contact data and message history. Relevant from the first pilot, not later. Pilot SMEs will upload real customer phone numbers. Now tracked as checklist items L1–L4.
 
 ---
 
@@ -261,24 +261,24 @@ Where [`mvp-scope.md`](./mvp-scope.md) departs from the pitched product. Each di
 
 | # | Deck says | MVP scope says | Consequence |
 |---|-----------|----------------|-------------|
-| 1 | Pipeline is a single stage list: `New → Contacted → Qualified → Proposal → Won/Lost` (slide 6) | **Two separate state machines** — Lead status `New → Contacted → Qualified → Converted → Lost` (§8) and a Deal pipeline (§9) | The deck conflated lead qualification with deal progression. The scope splits them, which is the sounder model but changes the domain: a Lead converts *into* a Deal, so `Converted` is a terminal lead status and the Deal starts its own lifecycle. Needs an explicit rule on which stage a converted lead's deal enters, and whether a Lead may exist without a Deal (it must, or capture breaks). |
-| 2 | Quotes & Invoices are the Starter/Growth dividing line and ship in Phase 2 | Deferred entirely (§21) | The three pricing tiers as published are **not sellable from the MVP** — remove the paywall claim from any pilot-facing material, or bill the pilot on a flat/free basis. |
+| 1 | Pipeline is a single stage list: `New → Contacted → Qualified → Proposal → Won/Lost` (slide 6) | **Two separate state machines**, Lead status `New → Contacted → Qualified → Converted → Lost` (§8) and a Deal pipeline (§9) | The deck conflated lead qualification with deal progression. The scope splits them, which is the sounder model but changes the domain: a Lead converts *into* a Deal, so `Converted` is a terminal lead status and the Deal starts its own lifecycle. Needs an explicit rule on which stage a converted lead's deal enters, and whether a Lead may exist without a Deal (it must, or capture breaks). |
+| 2 | Quotes & Invoices are the Starter/Growth dividing line and ship in Phase 2 | Deferred entirely (§21) | The three pricing tiers as published are **not sellable from the MVP**, remove the paywall claim from any pilot-facing material, or bill the pilot on a flat/free basis. |
 | 3 | Campaign Analytics with cost-per-lead and conversion-by-source is a Phase 1–2 module | Basic source tracking only; complex attribution out of scope (§15, §20) | Problem P2 remains unsolved after the MVP. This is the deck's second-strongest claim, so the pilot cannot validate it. Say so explicitly in pilot success criteria. |
 | 4 | "Bulk broadcast" WhatsApp/SMS campaigns, 50–5,000 messages/month by tier | Lightweight campaigns; bulk "should remain limited unless required by pilot customers" (§13, §14) | Message-tier pricing is untested by the MVP. Volume-driven cost risk moves to post-MVP. |
 | 5 | Mobile-first "not a desktop tool retrofitted with a mobile app" | Responsive web; native app out of scope (§18, §20) | Defensible for a pilot, but it weakens the differentiation claim on slide 7 versus competitors that ship native apps. Responsive quality is therefore a product risk, not just a QA concern. |
-| 6 | Three personas served (slide 5) | Primary target narrowed to the **Growing SME Sales Team**, 2–5 reps (§4) | Correct call — the collaboration pain is the differentiator, and a solo user cannot validate it. Starter-tier (1 seat) demand goes unvalidated by the pilot. |
+| 6 | Three personas served (slide 5) | Primary target narrowed to the **Growing SME Sales Team**, 2–5 reps (§4) | Correct call. The collaboration pain is the differentiator, and a solo user cannot validate it. Starter-tier (1 seat) demand goes unvalidated by the pilot. |
 | 7 | Team seats capped 1 / 3 / 10 with GHS 25/seat overage | Seat entitlements and billing not in MVP scope (§5, §20) | Seat limits must not be hardcoded during the MVP; leave the entitlement boundary at a layer that can later enforce caps. |
 | 8 | Mobile money as a first-class subscription payment method | Payments deferred (§21) | No subscription billing in the MVP at all. The GHS/mobile-money differentiation is unproven until post-MVP. |
 | 9 | Attribution loop closes: "spend shifts toward what works" (step 5, slide 4) | Learn step reduced to a dashboard of counts and leads-by-source (§15) | The five-step "continuous loop" becomes a four-step funnel in the MVP. Capture → Organize → Engage → Close(deal outcome only). |
-| 10 | Phase 1 MVP is four items: lead capture, pipeline, WhatsApp/SMS campaigns, mobile-first UI (slide 10) | Adds team seats/invites/roles (§5), follow-up tasks and reminders (§11), and a dashboard (§15) — three of the four **Phase 2** items — while deferring only quotes/invoices | **The MVP is materially larger than deck Phase 1.** The additions are justified (the 2–5 rep persona is meaningless without seats; reminders are the direct fix for P1), but slide 12's "3-month scope, already defined" no longer describes what is being built. Re-estimate before the greenlight decision. |
+| 10 | Phase 1 MVP is four items: lead capture, pipeline, WhatsApp/SMS campaigns, mobile-first UI (slide 10) | Adds team seats/invites/roles (§5), follow-up tasks and reminders (§11), and a dashboard (§15), three of the four **Phase 2** items, while deferring only quotes/invoices | **The MVP is materially larger than deck Phase 1.** The additions are justified (the 2–5 rep persona is meaningless without seats; reminders are the direct fix for P1), but slide 12's "3-month scope, already defined" no longer describes what is being built. Re-estimate before the greenlight decision. |
 
 ### Net position
 
-The MVP validates the deck's **first claim** — one shared place to capture, assign, follow up, and close — and defers the **second** — visible marketing ROI per channel. The demo may validate the WhatsApp workflow using test/sandbox/temporary provider credentials, but that does not validate production WhatsApp approval, limits, or economics. That is the right sequencing for a 3-month pilot, but the ask on slide 12 and any pilot pitch should be worded to match, otherwise pilot SMEs expect ROI reporting and production-grade WhatsApp readiness that will not be there.
+The MVP validates the deck's **first claim**, one shared place to capture, assign, follow up, and close, and defers the **second**, visible marketing ROI per channel. The demo may validate the WhatsApp workflow using test/sandbox/temporary provider credentials, but that does not validate production WhatsApp approval, limits, or economics. That is the right sequencing for a 3-month pilot, but the ask on slide 12 and any pilot pitch should be worded to match, otherwise pilot SMEs expect ROI reporting and production-grade WhatsApp readiness that will not be there.
 
 ---
 
-## Appendix — Deck slide map
+## Appendix. Deck slide map
 
 | Slide | Section | Spec section |
 |-------|---------|--------------|

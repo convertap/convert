@@ -1,6 +1,6 @@
 # Security Policy
 
-Convert stores third-party customer data — the contacts, phone numbers, and message
+Convert stores third-party customer data, the contacts, phone numbers, and message
 history of Ghanaian SMEs and the people they sell to. A vulnerability here exposes
 someone who never signed up for our product, so we would rather hear about a suspected
 issue than not.
@@ -20,7 +20,7 @@ We aim to acknowledge within three working days.
 ## Scope
 
 The product is pre-release: there is no production deployment and no real customer data
-yet. What is in scope is this repository — the tenancy model, the messaging adapters, the
+yet. What is in scope is this repository, the tenancy model, the messaging adapters, the
 public lead-capture path, and anything that would let one organisation reach another's
 data.
 
