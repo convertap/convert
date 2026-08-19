@@ -4,7 +4,7 @@ What must be settled before Phase 4 implementation starts. Two of these buckets 
 
 Scope authority remains [`mvp-scope.md`](./mvp-scope.md). This document does not change scope; it lists what has to be decided, obtained, or proven first.
 
-**Last updated:** 2026-08-18
+**Last updated:** 2026-08-19
 
 ## Status legend
 
@@ -168,7 +168,24 @@ P6 matters most. Without it agreed in advance, every pilot outcome gets read as 
 
 ## 7. WhatsApp spike, do this before UX design
 
-**Timebox: one week.** Run it before Phase 2 design commits to screens.
+**Timebox: one to two days for the demo spike.** Run it before Phase 2 design commits to
+screens.
+
+The original estimate was a week, set when the provider was unknown and inbound delivery was an
+open question. Fabric changes that: it is our own product, so whether a webhook arrives at all is
+not something we need to discover. What is left is Convert-side code and one measurement, and
+that is a day or two rather than a week.
+
+**Be precise about what the spike still proves.** Fabric answers "can a message be received". It
+does not answer "does an inbound message become a lead in Convert", because none of that code
+exists: no webhook ingress, no phone-to-contact match, no idempotency on repeated callbacks. That
+is the part worth proving before a dozen screens are designed on top of it.
+
+**And it does not remove the Meta approval underneath.** If Fabric wraps Cloud API, Convert still
+needs Meta Business verification, a dedicated number, and template approval (E1, E2, E4), and
+those are calendar-bound waiting rather than engineering time. If Fabric holds its own Solution
+Provider status, they move to Fabric and leave Convert's critical path. That single question is
+worth answering before planning around either. It is recorded on E3.
 
 Run this in two stages:
 
@@ -201,8 +218,12 @@ E1 → E2 → E4 · E5 · E6 · L1
 **Track B, decisions** (weeks 1–2, mostly meetings)
 R1–R9 in one session → A1–A6 → L2–L4 → P1–P6 · S1 and S7 are decided (ADR 0001, ADR 0015)
 
-**Track C, proving** (weeks 2–3, throwaway code)
+**Track C, proving** (week 1, throwaway code, one to two days of it)
 E0 → demo WhatsApp spike (§7) → E3 production provider decision → production readiness spike → answer recorded in `product-spec.md` §12
+
+Track C used to sit in weeks 2–3 because it waited on choosing a provider. With Fabric as the
+intended path the demo spike can start in week 1, which matters: it is the cheapest way to find
+out early whether inbound capture holds up.
 
 Demo implementation can start once E0, S1, and the core product rules needed for the affected screens are documented. Production pilot launch waits for Track A and the production readiness spike. Messaging code must go through the adapter contract from the first implementation, or provider swaps become rewrites.
 
