@@ -28,7 +28,10 @@ const bootstrap = async () => {
     });
   }
 
-  const port = Number(process.env.API_PORT ?? 3001);
+  // Hosts assign the port and expect the process to use it: Railway, Fly and Render all
+  // inject PORT, and binding anything else means the platform routes to a closed socket
+  // while the process reports itself healthy. API_PORT stays the local knob (ADR 0022).
+  const port = Number(process.env.PORT ?? process.env.API_PORT ?? 3001);
   await app.listen({ port, host: '0.0.0.0' });
   console.warn(`api listening on ${port} (docs at /docs)`);
 };
