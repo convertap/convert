@@ -1,6 +1,6 @@
-# Convert MVP — Project Scope
+# Convert MVP. Project Scope
 
-**Status:** Authoritative MVP scope. Where this document and [`product-spec.md`](./product-spec.md) (derived from the pitch deck) disagree, this document wins. Conflicts are catalogued in [`product-spec.md` §13 — Deck vs. MVP Scope Reconciliation](./product-spec.md#13-deck-vs-mvp-scope-reconciliation).
+**Status:** Authoritative MVP scope. Where this document and [`product-spec.md`](./product-spec.md) (derived from the pitch deck) disagree, this document wins. Conflicts are catalogued in [`product-spec.md` §13, Deck vs. MVP Scope Reconciliation](./product-spec.md#13-deck-vs-mvp-scope-reconciliation).
 
 **Last updated:** 2026-08-18
 
@@ -101,9 +101,9 @@ Businesses must be able to create and manage their Convert workspace.
 
 ### Initial roles
 
-**Owner / Administrator** — can manage the organization, team members, leads, deals, pipelines, campaigns, and settings.
+**Owner / Administrator**. Can manage the organization, team members, leads, deals, pipelines, campaigns, and settings.
 
-**Sales Representative** — can manage assigned leads, deals, follow-ups, notes, and customer interactions.
+**Sales Representative**. Can manage assigned leads, deals, follow-ups, notes, and customer interactions.
 
 More complex role-based access control can be introduced after MVP validation.
 
@@ -236,7 +236,7 @@ Convert maintains an activity history for every lead and deal.
 - Date/time
 - Notes or description
 
-This creates organizational memory so customer relationships are not stored only on individual employees' phones — a problem explicitly identified in the product concept.
+This creates organizational memory so customer relationships are not stored only on individual employees' phones, a problem explicitly identified in the product concept.
 
 ---
 
@@ -530,24 +530,24 @@ Further entities are introduced only where required by validated requirements.
 
 ## 25. Delivery Phases
 
-### Phase 1 — Product Definition
+### Phase 1. Product Definition
 Product vision refinement · Primary persona · Customer journey · Product workflows · Business rules · MVP boundaries · Role definition · Functional requirements
 
-### Phase 2 — UX and Product Design
+### Phase 2. UX and Product Design
 Information architecture · User flows · Wireframes · Mobile-first layouts · Core screen designs · Design system foundations
 
 Important screens: Login/signup · Dashboard · Contacts · Contact details · Leads · Pipeline · Deal details · Tasks · Campaigns · Team management · Settings
 
-### Phase 3 — Technical Design
+### Phase 3. Technical Design
 Architecture document · Database/domain model · API specification · Integration design · Security design · Deployment strategy · Development environment
 
-### Phase 4 — MVP Implementation
+### Phase 4. MVP Implementation
 Authentication · Organization management · User/team management · Contacts · Leads · Lead sources · Pipeline · Deals · Activities · Tasks · Follow-up reminders · WhatsApp/SMS integration · Basic campaigns · Notifications · Dashboard · Search/filtering
 
-### Phase 5 — Testing
+### Phase 5. Testing
 Unit · Integration · API · End-to-end · Responsive/mobile · Security · Performance · User acceptance
 
-### Phase 6 — Pilot Launch
+### Phase 6. Pilot Launch
 Recruit pilot businesses · Configure their organizations · Onboard users · Import initial contacts where necessary · Observe real usage · Gather structured feedback · Monitor errors and performance · Identify usability issues · Measure adoption
 
 ---
@@ -578,7 +578,7 @@ Whether pilot SMEs continue using Convert once the initial onboarding period end
 |------|------------|
 | Product scope becoming too broad | Maintain a strict distinction between Core MVP → Post-MVP → Future Product. |
 | WhatsApp integration complexity | Validate provider capabilities, business verification requirements, messaging rules, templates, costs, and API constraints before depending heavily on WhatsApp functionality. |
-| Low user adoption — reps keep using personal WhatsApp chats instead of updating Convert | Reduce manual data entry; make common workflows fast enough to use from a mobile phone. |
+| Low user adoption, reps keep using personal WhatsApp chats instead of updating Convert | Reduce manual data entry; make common workflows fast enough to use from a mobile phone. |
 | Poor product-market fit | Launch with a small pilot cohort and use real usage to drive subsequent development. |
 | Excessive architecture | Design for future growth while implementing only infrastructure required for the MVP. |
 

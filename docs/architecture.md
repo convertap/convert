@@ -1,8 +1,8 @@
-# Convert — Architecture
+# Convert. Architecture
 
-Target architecture for the MVP defined in [`mvp-scope.md`](./mvp-scope.md), designed so the deferred product in [`product-spec.md`](./product-spec.md) — quotes, invoices, payments, attribution, and the **Pro-tier public API** — can be added without rework.
+Target architecture for the MVP defined in [`mvp-scope.md`](./mvp-scope.md), designed so the deferred product in [`product-spec.md`](./product-spec.md), quotes, invoices, payments, attribution, and the **Pro-tier public API**, can be added without rework.
 
-Written stack-agnostic and still largely stack-independent: the layering, invariants, and messaging design hold regardless of runtime. The stack itself is now decided — §3, ADR 0001.
+Written stack-agnostic and still largely stack-independent: the layering, invariants, and messaging design hold regardless of runtime. The stack itself is now decided, §3, ADR 0001.
 
 **Last updated:** 2026-08-18
 
@@ -37,7 +37,7 @@ Written stack-agnostic and still largely stack-independent: the layering, invari
 
 ---
 
-## 3. Stack — decided (S1, ADR 0001)
+## 3. Stack, decided (S1, ADR 0001)
 
 TypeScript throughout, one pnpm monorepo, three runtimes, one datastore.
 
@@ -46,20 +46,20 @@ TypeScript throughout, one pnpm monorepo, three runtimes, one datastore.
 | Web | **Next.js**, App Router. UI plus BFF route handlers that hold the session |
 | API | **NestJS on the Fastify adapter**. HTTP interface, webhook ingress, later the Pro-tier public API |
 | Worker | **NestJS standalone application context**, sharing modules with the API |
-| Domain | `packages/core` and `packages/application` — framework-free, shared by API and worker |
+| Domain | `packages/core` and `packages/application`, framework-free, shared by API and worker |
 | Datastore | **PostgreSQL 16**, with row-level security as the tenancy boundary |
 | Query layer | **Drizzle ORM** + Drizzle Kit migrations, in `packages/infra` only (ADR 0017) |
-| Jobs | Postgres-backed queue (ADR 0010) — no second stateful service |
+| Jobs | Postgres-backed queue (ADR 0010), no second stateful service |
 | API docs | OpenAPI generated from code and committed (ADR 0015) |
 | Cache, object storage | Deferred. Not on the critical path at pilot scale |
 
-Three processes rather than the two a server-rendered monolith would need. What that buys: the API boundary the deck already sells at Pro tier exists from day one, NestJS DI makes the ports-and-adapters wiring structural rather than a convention, the worker is a first-class runtime sharing use cases, and webhook ingress is insulated from UI deploys — shipping a screen cannot drop a WhatsApp delivery receipt.
+Three processes rather than the two a server-rendered monolith would need. What that buys: the API boundary the deck already sells at Pro tier exists from day one, NestJS DI makes the ports-and-adapters wiring structural rather than a convention, the worker is a first-class runtime sharing use cases, and webhook ingress is insulated from UI deploys. Shipping a screen cannot drop a WhatsApp delivery receipt.
 
 What it costs, recorded honestly: more boilerplate per CRUD path, a cross-origin session problem (solved by the BFF in ADR 0013), longer CI, three processes to run locally, and a DTO duplication risk between web and API (contained by ADR 0014 and by generating the web client from the committed OpenAPI spec).
 
 ### The one hard operational constraint
 
-**`web`, `api`, and Postgres deploy to the same region.** Every page render is now web → api → database. Co-located that is a few milliseconds; split across continents — the web app on a US or EU edge platform with the database in Africa — it is two intercontinental round trips per render against a 2.5 s LCP budget on 3G (§18). This effectively rules out an edge-only deployment and points at a container host in the chosen region.
+**`web`, `api`, and Postgres deploy to the same region.** Every page render is now web → api → database. Co-located that is a few milliseconds; split across continents, the web app on a US or EU edge platform with the database in Africa, it is two intercontinental round trips per render against a 2.5 s LCP budget on 3G (§18). This effectively rules out an edge-only deployment and points at a container host in the chosen region.
 
 ### Layering
 
@@ -93,9 +93,9 @@ graph LR
 
 Three entry points, and they have different threat and reliability profiles:
 
-- **Authenticated app** — sessions, org-scoped, human pace.
-- **Public lead form** — unauthenticated, rate-limited, spam-exposed, writes into a specific organization.
-- **Webhook ingress** — unauthenticated by session but signature-verified, high retry volume, must be idempotent.
+- **Authenticated app**. Sessions, org-scoped, human pace.
+- **Public lead form**. Unauthenticated, rate-limited, spam-exposed, writes into a specific organization.
+- **Webhook ingress**. Unauthenticated by session but signature-verified, high retry volume, must be idempotent.
 
 Keep them separate from the first commit. Merging them is how the lead form ends up trusted.
 
@@ -138,7 +138,7 @@ graph TD
   MSG --> ADP
 ```
 
-**The rule that matters:** all four interfaces converge on one service layer. Authorization, entitlement checks, and activity logging happen there — once — so the public API cannot later become a second, weaker door into the same data.
+**The rule that matters:** all four interfaces converge on one service layer. Authorization, entitlement checks, and activity logging happen there, once, so the public API cannot later become a second, weaker door into the same data.
 
 | Context | Owns | Deliberately does not own |
 |---------|------|---------------------------|
@@ -181,20 +181,20 @@ erDiagram
 
 | Entity | Reason |
 |--------|--------|
-| `consent` | Marketing opt-in is a Meta requirement (E4.2) *and* an Act 843 requirement (L3). Needs timestamp, source, channel, and withdrawal — a boolean on `contact` cannot carry that |
+| `consent` | Marketing opt-in is a Meta requirement (E4.2) *and* an Act 843 requirement (L3). Needs timestamp, source, channel, and withdrawal. A boolean on `contact` cannot carry that |
 | `provider_event` | Raw inbound webhook payloads, stored before interpretation. The idempotency key and the audit trail when a provider disputes delivery |
 | `campaign_recipient` | Per-recipient send state. A campaign is not one send; it is N sends with N independent outcomes |
 | `api_client` | Pro-tier API credentials (C5). Present as a table, unreferenced until the API ships |
 | `outbox_event` | Durable record of domain facts, for outbound integration webhooks and for rebuilding read models |
-| `audit_event` | System-level actions — logins, role changes, deactivations, exports. Distinct from `activity`, which is the sales timeline reps read |
+| `audit_event` | System-level actions, logins, role changes, deactivations, exports. Distinct from `activity`, which is the sales timeline reps read |
 
 ### Key fields on `contact`
 
 `phone_e164` is the natural identity (checklist R1). Normalize on write, store the raw input alongside it for support purposes, and index `(org_id, phone_e164)` uniquely.
 
-`last_inbound_at` is maintained on every inbound message. It is what determines whether the WhatsApp 24-hour window is open — see §10.3.
+`last_inbound_at` is maintained on every inbound message. It is what determines whether the WhatsApp 24-hour window is open, see §10.3.
 
-### Invariants **[DECIDE — R1–R9]**
+### Invariants **[DECIDE R1–R9]**
 
 Proposals, to be confirmed in the §3 decision session of the checklist:
 
@@ -219,13 +219,13 @@ Proposals, to be confirmed in the §3 decision session of the checklist:
 
 Three layers, each catching what the one above misses.
 
-**1. Database — Postgres row-level security.** Every tenant table gets an RLS policy on `org_id`, and the application connects as a non-superuser role that cannot bypass it. The session sets the current org per transaction. This turns a forgotten `WHERE org_id = …` from a data breach into an empty result set. It is the single highest-leverage decision in this document and costs about a day.
+**1. Database: Postgres row-level security.** Every tenant table gets an RLS policy on `org_id`, and the application connects as a non-superuser role that cannot bypass it. The session sets the current org per transaction. This turns a forgotten `WHERE org_id = …` from a data breach into an empty result set. It is the single most valuable decision in this document and costs about a day.
 
-**2. Service layer — authorization.** Role checks (`Owner`, `Sales Representative`) and record-level visibility. **[DECIDE — R3]**: the proposal is owner sees all, rep sees own by default, with an org-level toggle to open the pipeline. This must be resolved before implementation because it determines whether every list query carries an owner predicate.
+**2. Service layer: authorization.** Role checks (`Owner`, `Sales Representative`) and record-level visibility. **[DECIDE R3]**: the proposal is owner sees all, rep sees own by default, with an org-level toggle to open the pipeline. This must be resolved before implementation because it determines whether every list query carries an owner predicate.
 
-**3. Interface layer — principals.** Resolves *who* is acting and hands the service layer a principal. Never queries the database directly.
+**3. Interface layer: principals.** Resolves *who* is acting and hands the service layer a principal. Never queries the database directly.
 
-### Principals **[DECIDE — A6]**
+### Principals **[DECIDE A6]**
 
 ```
 Principal
@@ -238,9 +238,9 @@ Every service method takes a principal. Every activity and audit row records whi
 
 ---
 
-## 8. Public API — decided now, shipped later
+## 8. Public API, decided now, shipped later
 
-Not in MVP scope (scope §20). But the conventions below cost nothing while there are no consumers and are near-impossible to change once there are.
+Not in MVP scope (scope §20), but the conventions below cost nothing while there are no consumers and are near-impossible to change once there are.
 
 | Concern | Decision |
 |---------|----------|
@@ -249,7 +249,7 @@ Not in MVP scope (scope §20). But the conventions below cost nothing while ther
 | IDs | ULIDs in every payload (I12). Never expose integer keys |
 | Auth | Org-scoped API keys at launch, hashed at rest, prefixed for leak detection. OAuth client-credentials only if a partner needs it |
 | Scopes | Per-resource read/write (`contacts:read`, `deals:write`, …), enforced in the service layer against `ClientPrincipal` |
-| Entitlement | API access gated on Pro tier — the first real consumer of the A5 policy layer |
+| Entitlement | API access gated on Pro tier, the first real consumer of the A5 policy layer |
 | Idempotency | `Idempotency-Key` header on all unsafe methods; response replayed for 24h |
 | Pagination | Cursor-based, opaque cursor. Offset pagination breaks under concurrent writes and cannot be retrofitted |
 | Errors | One envelope: stable machine `code`, human `message`, optional field-level `details` |
@@ -275,7 +275,7 @@ Rules:
 
 - **Every job is idempotent and carries a dedupe key.** Restarts and provider retries are normal operation, not incidents (C6).
 - **Retries use exponential backoff with a dead-letter queue that a human can see.** A silently dropped campaign send is a customer-visible failure with a money cost.
-- **Reminder sweeps are idempotent per (task, due-window).** Firing twice is worse than firing late — it teaches reps to ignore notifications.
+- **Reminder sweeps are idempotent per (task, due-window).** Firing twice is worse than firing late. It teaches reps to ignore notifications.
 - **Send pacing lives in the worker,** because WhatsApp per-number throughput tiers are a hard external limit (E4.3). A campaign is a paced drip, not a burst.
 
 ---
@@ -295,7 +295,7 @@ infra/whatsapp/internal    adapter: future internal production provider
 infra/sms/<aggregator>     adapter: Ghana SMS provider
 ```
 
-The domain asks to "send template `follow_up_v1` to contact X on WhatsApp." It never learns the vendor. This is what makes E3 reversible after the spike — swapping Meta test credentials, Cloud API direct, a BSP, or the future internal production provider touches one adapter, not the product.
+The domain asks to "send template `follow_up_v1` to contact X on WhatsApp." It never learns the vendor. This is what makes E3 reversible after the spike, swapping Meta test credentials, Cloud API direct, a BSP, or the future internal production provider touches one adapter, not the product.
 
 ### 10.2 Unified message record
 
@@ -317,32 +317,32 @@ WhatsApp permits free-form replies only within 24 hours of the customer's last i
 
 - `contact.last_inbound_at` updated on every inbound message.
 - Window state is **derived**, never stored: `open` if `now - last_inbound_at < 24h`.
-- The service layer rejects a free-form send into a closed window before it reaches the provider — a provider-side rejection costs a round trip and produces a worse error.
+- The service layer rejects a free-form send into a closed window before it reaches the provider. A provider-side rejection costs a round trip and produces a worse error.
 - **The UI must show window state on the contact record.** Otherwise reps compose messages that cannot send, which reads as the product being broken.
 
 This is a case where an external API rule surfaces directly in the interface. Do not hide it.
 
 ### 10.4 Consent gate (I9, L3)
 
-Every marketing send passes a consent check: a live `consent` row for that contact and channel, recording when, how, and through which capture path it was granted. Withdrawal writes a new row rather than mutating the old one — the history is the compliance evidence.
+Every marketing send passes a consent check: a live `consent` row for that contact and channel, recording when, how, and through which capture path it was granted. Withdrawal writes a new row rather than mutating the old one. The history is the compliance evidence.
 
 Utility and service messages follow different provider rules from marketing; the template's category drives which gate applies.
 
 ### 10.5 Inbound handling
 
 1. Verify signature. Reject unsigned traffic before parsing.
-2. Persist the raw payload as a `provider_event`, keyed on the provider's event ID. **Duplicate key means stop here** — the work is already done.
+2. Persist the raw payload as a `provider_event`, keyed on the provider's event ID. **Duplicate key means stop here**. The work is already done.
 3. Resolve the sender by `phone_e164` within the receiving organization.
 4. Match or create a contact, append the message and an activity row, update `last_inbound_at`.
-5. **[DECIDE — depends on the WhatsApp spikes]** If no contact matches, create a lead with source `WhatsApp`. This is the deck's headline capture path. The demo spike determines whether it is shown in the demo; the production readiness spike determines whether it ships for real pilot/customer usage.
+5. **[DECIDE depends on the WhatsApp spikes]** If no contact matches, create a lead with source `WhatsApp`. This is the deck's headline capture path. The demo spike determines whether it is shown in the demo; the production readiness spike determines whether it ships for real pilot/customer usage.
 
-Step 2 before step 3 is deliberate. Store first, interpret second — when a provider changes payload shape, the raw events are what let you recover.
+Step 2 before step 3 is deliberate. Store first, interpret second, when a provider changes payload shape, the raw events are what let you recover.
 
 ---
 
 ## 11. Activity log and audit
 
-`activity` is the product, not plumbing — it is the direct answer to problem P3, and the reason a business's history survives a rep leaving.
+`activity` is the product, not plumbing. It is the direct answer to problem P3, and the reason a business's history survives a rep leaving.
 
 - Insert-only (I6). Corrections are new rows.
 - Typed per scope §10: call, WhatsApp, SMS, meeting, note, follow-up, status change, stage change.
@@ -355,11 +355,11 @@ Step 2 before step 3 is deliberate. Store first, interpret second — when a pro
 
 ## 12. Insights and read models
 
-Dashboard metrics (scope §15) are counts and sums over leads, deals, tasks, and sources. At pilot scale, query them directly with proper indexes — no aggregation pipeline, no warehouse.
+Dashboard metrics (scope §15) are counts and sums over leads, deals, tasks, and sources. At pilot scale, query them directly with proper indexes, no aggregation pipeline, no warehouse.
 
 The seam that matters: dashboard queries go through an `Insights` read interface, not scattered ad-hoc SQL in view code. When "leads by source" grows into the cost-per-lead attribution the deck promises (spec §12), the callers do not change.
 
-**Explicitly not built:** cost-per-lead, multi-touch attribution, ad-spend ingestion. Deferred per scope §20, so problem P2 stays open — that gap is recorded in `product-spec.md` §13 item 3 and must not be quietly closed here.
+**Explicitly not built:** cost-per-lead, multi-touch attribution, ad-spend ingestion. Deferred per scope §20, so problem P2 stays open. That gap is recorded in `product-spec.md` §13 item 3 and must not be quietly closed here.
 
 ---
 
@@ -373,7 +373,7 @@ Phone search must normalize the query the same way writes do (I2), or reps typin
 
 ## 14. Notifications
 
-In-app first (scope §16), delivered from the same `outbox_event` stream that will later feed integration webhooks — one fact source, several consumers.
+In-app first (scope §16), delivered from the same `outbox_event` stream that will later feed integration webhooks, one fact source, several consumers.
 
 Push and WhatsApp-based reminders are deferred, but the notification record carries a channel field so adding one is additive. Do not model in-app as a special case.
 
@@ -389,19 +389,19 @@ Push and WhatsApp-based reminders are deferred, but the notification record carr
 | Metrics | Message send success rate and cost per org, job queue depth and age, reminder delivery latency, p75 mobile page load |
 | Provider dashboards | WhatsApp quality rating and template approval status. A silent quality downgrade throttles sends and looks like a product bug |
 
-The pilot's real purpose is learning. If activation (10 contacts + 1 deal in 7 days, scope §26) is not instrumented at build time, the pilot produces opinions instead of evidence — checklist S5.
+The pilot's real purpose is learning. If activation (10 contacts + 1 deal in 7 days, scope §26) is not instrumented at build time, the pilot produces opinions instead of evidence, checklist S5.
 
 ---
 
 ## 16. Security
 
-- **Tenancy isolation is the primary control** — RLS plus service-layer authorization plus principal separation (§7).
+- **Tenancy isolation is the primary control**. RLS plus service-layer authorization plus principal separation (§7).
 - **Public lead form** is unauthenticated and internet-facing: rate limit per IP and per organization, bot mitigation, strict field validation, and no reflection of stored data back to the submitter.
 - **Webhook ingress** verifies provider signatures before parsing; unsigned requests are dropped, not logged as errors.
 - **Secrets** in a managed secret store, never in the repository. Provider credentials are per-environment.
 - **API keys** hashed at rest, shown once, prefixed so leaked keys are detectable in scans.
-- **PII discipline** — customer phone numbers are third-party data under L1–L4. Encrypt at rest, redact in logs, and support per-organization export and deletion from the start (C7). Retrofitting deletion across an append-only log is genuinely hard; design the boundary now.
-- **Sessions** — long-lived on mobile to avoid re-auth cost (relevant if A1 lands on phone+OTP, where every login costs an SMS), with server-side revocation on member deactivation.
+- **PII discipline**. Customer phone numbers are third-party data under L1–L4. Encrypt at rest, redact in logs, and support per-organization export and deletion from the start (C7). Retrofitting deletion across an append-only log is genuinely hard; design the boundary now.
+- **Sessions**. Long-lived on mobile to avoid re-auth cost (relevant if A1 lands on phone+OTP, where every login costs an SMS), with server-side revocation on member deactivation.
 
 ---
 
@@ -419,8 +419,8 @@ The pilot's real purpose is learning. If activation (10 contacts + 1 deal in 7 d
 ```
 
 - Three processes, one repository, one migration path. All in the same region (§3). `api` and `worker` build from the same image with different entrypoints; `web` is its own build.
-- Only `api` and `worker` hold database credentials. `web` has none — it holds a session cookie and an API service credential (ADR 0013).
-- Scale the worker independently of the web tier — messaging load and human load do not correlate.
+- Only `api` and `worker` hold database credentials. `web` has none. It holds a session cookie and an API service credential (ADR 0013).
+- Scale the worker independently of the web tier. Messaging load and human load do not correlate.
 - Three environments: local, staging, production. Demo/staging may use Meta test credentials, a BSP sandbox, or a temporary third-party provider account. Production uses the chosen production adapter. Nothing in the pilot should ever be a first run of a code path.
 - **Region [DECIDE]:** an Africa region (Johannesburg or Cape Town) roughly halves round-trip latency from Accra versus Europe, which matters given C1, and gives a simpler residency story for L1. Europe is cheaper with wider managed-service choice. Recommendation: Africa if the managed Postgres and cost work out; otherwise stay container-portable and revisit.
 - CI: lint, type check, unit tests, integration tests against a real Postgres, migration check, and the §18 performance budget as a hard gate.
@@ -439,7 +439,7 @@ Numbers, not intentions. Enforced in CI, measured on a throttled 4G profile agai
 | Server response, list views at p75 | ≤ 300 ms |
 | Total transfer, first visit | ≤ 500 KB |
 
-These are proposals — the point is that a number exists and a build fails when it regresses. "Mobile-first" is the deck's differentiation claim (slide 7); without a gate it degrades silently, one convenience library at a time.
+These are proposals. The point is that a number exists and a build fails when it regresses. "Mobile-first" is the deck's differentiation claim (slide 7); without a gate it degrades silently, one convenience library at a time.
 
 ---
 
@@ -468,7 +468,7 @@ Blocking. Each maps to a checklist item; none can be resolved unilaterally by en
 
 | Ref | Assumption made here | Needs |
 |-----|---------------------|-------|
-| ~~S1~~ | ~~Stack~~ | **Decided** — Next.js + NestJS/Fastify + worker on Postgres (ADR 0001) |
+| ~~S1~~ | ~~Stack~~ | **Decided**, Next.js + NestJS/Fastify + worker on Postgres (ADR 0001) |
 | A1 | Long-lived mobile sessions, held by the web BFF (ADR 0013) | Login method |
 | A6 | Principal abstraction from day one | Sign-off |
 | R1 | `phone_e164` unique per org, merge prompt on collision | Sign-off |
@@ -500,7 +500,7 @@ Two additions since this document was first written, both consequences of the st
 | `tests/invariants/` + `tools/check_invariant_coverage.py` | Invariants I1–I12 as executable specification |
 | `tools/check_adr_discipline.py` | A guardrail cannot change without an ADR in the same pull request |
 | CI gates G1–G10 | Boundaries, ADR pairing, types, lint, tests, invariants, migrations, RLS, integration, performance, OpenAPI currency |
-| [`code-review-checklist.md`](./code-review-checklist.md) | What a machine cannot check — consent in the send path, window state in the UI, cross-tenant verification |
+| [`code-review-checklist.md`](./code-review-checklist.md) | What a machine cannot check, consent in the send path, window state in the UI, cross-tenant verification |
 | [`definition-of-done.md`](./definition-of-done.md) | Story and release completion, including the messaging-specific criteria |
 
 Full detail in [`engineering-guardrails.md`](./engineering-guardrails.md).

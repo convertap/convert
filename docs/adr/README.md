@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-One file per decision. Numbered, immutable once accepted, superseded rather than edited. The point is that six months from now the reasoning is recoverable — including the alternatives that were rejected, which is the part memory loses first.
+One file per decision. Numbered, immutable once accepted, superseded rather than edited. The point is that six months from now the reasoning is recoverable. Including the alternatives that were rejected, which is the part memory loses first.
 
 ## Index
 
@@ -28,14 +28,14 @@ One file per decision. Numbered, immutable once accepted, superseded rather than
 
 Statuses: **Proposed** (written, not yet ratified) · **Accepted** (in force) · **Superseded** (replaced, kept for the record) · **Rejected** (considered and declined, kept so it is not re-litigated).
 
-Most records here are **Proposed**: they were extracted from `architecture.md` so they could be cited and argued with. They become Accepted at the technical design sign-off, and their Consequences sections get completed then — an accepted ADR with an empty Consequences section is not finished.
+Most records here are **Proposed**: they were extracted from `architecture.md` so they could be cited and argued with. They become Accepted at the technical design sign-off, and their Consequences sections get completed then, an accepted ADR with an empty Consequences section is not finished.
 
 ## Writing one
 
 1. Copy [`template.md`](./template.md) to `NNNN-short-slug.md`, taking the next free number.
 2. Fill in Context before Decision. If the context does not make the decision feel forced, the decision is probably arbitrary.
 3. Name the rejected alternatives and why they lost. This is the section future readers need most.
-4. State how it is enforced — a CI gate, a boundary rule, a test, or a checklist line. A decision with no enforcement is a preference.
+4. State how it is enforced. A CI gate, a boundary rule, a test, or a checklist line. A decision with no enforcement is a preference.
 
 ## Superseding one
 

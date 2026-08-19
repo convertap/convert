@@ -10,7 +10,7 @@ Errors are a first-class part of Convert, not a fallback branch (ADR 0018). This
 
 A rep is in front of a customer, on a phone, on a network that drops mid-request. "Something went wrong" is expensive in that moment: they cannot tell whether the WhatsApp message went out, whether pressing send again charges twice, or whether to give up and write the number on paper.
 
-Many of our failures are also not bugs. A closed 24-hour window is WhatsApp telling a rep what they may do next. Missing consent is a legal boundary. A provider throttle is normal traffic. Each needs its own words, status, and retry answer — which is why they are defined as data rather than handled ad hoc.
+Many of our failures are also not bugs. A closed 24-hour window is WhatsApp telling a rep what they may do next. Missing consent is a legal boundary. A provider throttle is normal traffic. Each needs its own words, status, and retry answer, which is why they are defined as data rather than handled ad hoc.
 
 ---
 
@@ -47,7 +47,7 @@ The boundary rule: **layers below the interface throw and do not log.** A failur
 
 **Never build user-facing text from `message`.** It is a technical string; showing it leaks internals and reads like a crash. Use `userMessageFor(code)`.
 
-**No silent catch.** Catch to add context or to convert to a typed error, then rethrow. A `catch` that does neither must be justified in review — it is how a failed WhatsApp send becomes a lead that looks contacted but never was.
+**No silent catch.** Catch to add context or to convert to a typed error, then rethrow. A `catch` that does neither must be justified in review. It is how a failed WhatsApp send becomes a lead that looks contacted but never was.
 
 **Nothing internal reaches a client.** No driver error, SQL fragment, or stack trace. Unrecognised exceptions become `internal_error` and the detail stays in the log.
 
@@ -57,7 +57,7 @@ The boundary rule: **layers below the interface throw and do not log.** A failur
 
 **Idempotency is what makes retries safe.** Every unsafe request accepts an `Idempotency-Key`; every job carries a dedupe key. Retry without it is a double charge.
 
-**Log with structure, never with PII.** No message bodies, no full phone numbers — third-party data under Act 843. Use `maskPhone`.
+**Log with structure, never with PII.** No message bodies, no full phone numbers, third-party data under Act 843. Use `maskPhone`.
 
 ---
 
@@ -67,9 +67,9 @@ Every data surface has three states, and none is optional: **loading**, **empty*
 
 An error state has to answer three questions:
 
-1. **What happened** — in the customer's terms, not ours.
-2. **What to do now** — retry, pick a template, ask an admin, wait.
-3. **Whether their work survived** — the most common unspoken fear, and cheap to answer.
+1. **What happened**. In the customer's terms, not ours.
+2. **What to do now**. Retry, pick a template, ask an admin, wait.
+3. **Whether their work survived**. The most common unspoken fear, and cheap to answer.
 
 Product-legitimate states get explained rather than apologised for. A closed conversation window is not "an error occurred"; it is *"More than 24 hours have passed since this customer last messaged, so WhatsApp only allows an approved template now. Pick a template to continue."*
 
@@ -82,7 +82,7 @@ Failures are expected traffic, so they are designed for:
 - Exponential backoff on retryable failures.
 - A dead-letter destination **a human looks at**. A silently dropped campaign send is a customer-visible failure with a money cost.
 - Idempotent handlers, so a restart mid-send does not duplicate.
-- Provider quality rating and template approval status surfaced to the team — a silent WhatsApp downgrade throttles sends and reads exactly like a product bug.
+- Provider quality rating and template approval status surfaced to the team. A silent WhatsApp downgrade throttles sends and reads exactly like a product bug.
 
 ---
 
