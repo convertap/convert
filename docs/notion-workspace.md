@@ -192,7 +192,23 @@ The connector is per user **and per client**. Authorising it in the Claude deskt
 
 A token is needed for exactly one thing, which the connector cannot do: `tools/push_notion_mirror.py` running unattended under `infisical run`. `.env.example` documents `NOTION_TOKEN` and the credentials register carries a row for it, marked not created yet. Nothing else uses it, and CI never sees it.
 
-Two properties of the token path worth remembering. A Notion integration sees nothing by default, so the API returns an empty workspace until someone shares a page with the integration, which looks identical to a broken token. And loading a tool's schema is not the same as the tool working: an earlier stdio server exposed all 24 tools and returned `401 unauthorized` on every call.
+Three properties of the token path worth remembering.
+
+**A connection starts with access to nothing.** Notion calls these connections now, previously
+integrations. Creating one grants no access at all: it is not a read-only view of the workspace,
+it is an empty workspace. Access is granted per page, and children inherit it, so connecting the
+two mirrored pages is the whole grant. A connection also never exceeds the access of the person
+who created it.
+
+**Distinguish the two failures, because they are not the same call.** A bad or missing token
+returns `401 unauthorized`. A valid token asking for a page that has not been connected returns
+`404`, the same answer as a page identifier that does not exist: as far as that token is
+concerned, the page is not there. So a 404 means either not connected or wrong id, and never says
+which. `tools/push_notion_mirror.py` prints both readings when it sees one, because guessing
+wrong costs an hour.
+
+**Loading a tool's schema is not the same as the tool working.** An earlier stdio server exposed
+all 24 tools and returned `401 unauthorized` on every call.
 
 ---
 
