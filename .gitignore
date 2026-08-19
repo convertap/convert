@@ -19,6 +19,10 @@ venv/
 dist/
 build/
 .next/
+
+# Turbo's local build cache. Machine-specific and useless to anyone else: 60 files and
+# 2.4 MB of it had been committed, including .tar.zst archives of build output.
+.turbo/
 out/
 *.tsbuildinfo
 
