@@ -17,6 +17,7 @@ jobs:
   guardrails:
     name: G1-G2 boundaries and ADR discipline, G14-G15 secrets and mirror
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,9 +45,15 @@ jobs:
       # public the moment it lands. Runs on history, not just the diff, because a
       # rewritten branch can carry an older commit in.
       - name: G14 secret scan
+        env:
+          # Nothing may stop to ask a question on a runner with no terminal.
+          DEBIAN_FRONTEND: noninteractive
         run: |
           curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | sudo -E bash
-          sudo apt-get install -y infisical
+          # The runner runs its own background upgrades, which hold the dpkg lock.
+          # apt waits on it forever by default, which reads as a hung job rather
+          # than a slow one. Queue for three minutes, then fail for real (ADR 0023).
+          sudo apt-get install -y -o DPkg::Lock::Timeout=180 infisical
           # --redact matters on a public repository: without it a detected secret
           # gets printed into a world-readable build log, which is the leak.
           infisical scan --redact --exit-code=1
@@ -54,6 +61,7 @@ jobs:
   quality:
     name: G3-G6 types, lint, tests, invariants
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -110,6 +118,7 @@ jobs:
   database:
     name: G7-G8 migrations, RLS, integration
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:16
@@ -161,6 +170,7 @@ jobs:
   performance:
     name: G9 mobile performance budget
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
