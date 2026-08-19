@@ -239,9 +239,17 @@ python tools/push_notion_mirror.py --accept                     # record a hand-
 
 The pusher is bounded in code: it can only replace the body of a mermaid code block that already exists on the target page. It never creates a block, never deletes one, and never touches prose, tables, or callouts. If a page holds fewer mermaid blocks than the manifest addresses, it refuses rather than guessing. `--accept` refuses to stamp a verbatim mirror, so the manifest cannot claim a diagram is published when it is not.
 
-Two limits worth stating plainly. The gate cannot see an edit made directly in Notion, so an editorial page can still rot through neglect on the Notion side; only the git side is covered. And section headings are load-bearing: renaming one breaks the manifest until it is repointed, which the gate reports as a distinct error rather than as drift.
+Two limits worth stating plainly. Section headings are load-bearing: renaming one breaks the manifest until it is repointed, which the gate reports as a distinct error rather than as drift. And G15 cannot see an edit made directly in Notion, because it never leaves the machine.
 
-The two verbatim mirrors ship marked `pending`, because publishing them needs a token that does not exist yet. The gate reports pending mirrors without failing: there is no earlier state for them to have drifted from, and failing every pull request over a setup step unrelated to the change under review would teach people to ignore the gate.
+For that second one there is a separate check, which needs the token and so is not part of CI:
+
+```bash
+infisical run --env=dev -- python tools/push_notion_mirror.py --verify
+```
+
+It compares every published block against git and writes nothing. Worth running if a diagram in Notion ever looks wrong, since the answer is either "somebody edited it here" or "the push never happened". It does not cover the editorial pages: those are meant to differ from their sources, so there is nothing to compare them against.
+
+Both verbatim mirrors were published on 19 August 2026 and verified byte-identical to git. The `pending` flag they shipped with is gone; it exists for the window between registering a mirror and first publishing it, when the gate reports the mirror without failing, because there is no earlier state for it to have drifted from.
 
 ---
 
