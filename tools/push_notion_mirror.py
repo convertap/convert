@@ -7,6 +7,10 @@ Two modes, because the two kinds of mirror need opposite treatment:
         Overwrite the mermaid code blocks of every `verbatim` mirror with the version in
         git, then stamp those mirrors current. Needs NOTION_TOKEN.
 
+    infisical run --env=dev -- python tools/push_notion_mirror.py --verify
+        Compare what Notion holds against git, block by block, and write nothing. This is
+        the only check that catches an edit made directly in Notion, which G15 cannot see.
+
     python tools/push_notion_mirror.py --accept
         Stamp the `editorial` mirrors current. No network. Run this after a person has
         read a source change and updated the stakeholder page by hand.
@@ -100,6 +104,45 @@ def rich_text(body: str) -> list[dict]:
     return [{"type": "text", "text": {"content": p}} for p in parts]
 
 
+def block_text(block: dict) -> str:
+    """The mermaid body currently stored in a Notion code block."""
+    joined = "".join(rt["plain_text"] for rt in block["code"]["rich_text"])
+    return "\n".join(line.rstrip() for line in joined.strip().splitlines())
+
+
+def verify(manifest: dict, token: str) -> int:
+    """Compare what Notion holds against git, block by block. Returns the mismatch count.
+
+    This is the one check that catches an edit made directly in Notion, which gate G15
+    cannot see: G15 compares the manifest against the working tree and never leaves the
+    machine. Needs the token, so it is a local command rather than part of CI.
+    """
+    bad = 0
+    for mirror in manifest["mirrors"]:
+        if mirror["kind"] != "verbatim":
+            continue
+        blocks = [
+            b
+            for b in page_children(mirror["page"], token)
+            if b["type"] == "code" and b["code"].get("language") == "mermaid"
+        ]
+        for entry in mirror["diagrams"]:
+            n = entry["page_block"]
+            if n >= len(blocks):
+                print(f"  MISSING  {mirror['title']} block {n}")
+                bad += 1
+                continue
+            want, live = diagram_source(entry), block_text(blocks[n])
+            if want == live:
+                print(f"  match    {mirror['title']} block {n}")
+                continue
+            bad += 1
+            print(f"  DIFFERS  {mirror['title']} block {n}  <- {entry['file']} {entry['section']}")
+            print(f"    git : {want[:88]!r}")
+            print(f"    live: {live[:88]!r}")
+    return bad
+
+
 def push(manifest: dict, token: str, dry_run: bool) -> list[str]:
     """Overwrite verbatim mirrors. Returns the titles that are now current in Notion."""
     pushed = []
@@ -159,6 +202,11 @@ def main() -> int:
         help="record the editorial mirrors as current, without touching Notion",
     )
     ap.add_argument("--dry-run", action="store_true", help="say what would change, change nothing")
+    ap.add_argument(
+        "--verify",
+        action="store_true",
+        help="compare what Notion holds against git without writing anything",
+    )
     args = ap.parse_args()
 
     manifest = load_manifest()
@@ -184,13 +232,21 @@ def main() -> int:
         return 1 if refused else 0
 
     token = os.environ.get("NOTION_TOKEN")
-    if not token and not args.dry_run:
+    if args.verify:
+        if not token:
+            die("NOTION_TOKEN is not set. --verify has to read Notion to compare against it.")
+        bad = verify(manifest, token)
+        print(f"\n{bad} block(s) differ from git." if bad else "\nNotion matches git exactly.")
+        return 1 if bad else 0
+
+    if not token:
         die(
             "NOTION_TOKEN is not set. Secrets come from Infisical, never a file (ADR 0020):\n"
-            "  infisical run --env=dev -- python tools/push_notion_mirror.py"
+            "  infisical run --env=dev -- python tools/push_notion_mirror.py\n"
+            "\n--dry-run needs it too: locating the blocks to write means reading the page."
         )
 
-    pushed = push(manifest, token or "", args.dry_run)
+    pushed = push(manifest, token, args.dry_run)
     if args.dry_run:
         print("\nDry run, nothing written.")
         return 0

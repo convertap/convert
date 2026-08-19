@@ -33,8 +33,7 @@
           "page_block": 3
         }
       ],
-      "hash": null,
-      "pending": true
+      "hash": "d723168a6d62d7bc"
     },
     {
       "title": "Domain model and vocabulary: state machines",
@@ -55,8 +54,7 @@
           "page_block": 2
         }
       ],
-      "hash": null,
-      "pending": true
+      "hash": "c9eea9bfac0665e6"
     },
     {
       "title": "How the system fits together",
