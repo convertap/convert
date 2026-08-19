@@ -31,6 +31,7 @@ page is shared with it, and an unshared page is indistinguishable from a bad tok
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 import os
 import sys
@@ -138,8 +139,10 @@ def verify(manifest: dict, token: str) -> int:
                 continue
             bad += 1
             print(f"  DIFFERS  {mirror['title']} block {n}  <- {entry['file']} {entry['section']}")
-            print(f"    git : {want[:88]!r}")
-            print(f"    live: {live[:88]!r}")
+            for line in difflib.unified_diff(
+                want.splitlines(), live.splitlines(), "git", "notion", lineterm="", n=1
+            ):
+                print(f"    {line}")
     return bad
 
 

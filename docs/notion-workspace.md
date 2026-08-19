@@ -247,7 +247,28 @@ For that second one there is a separate check, which needs the token and so is n
 infisical run --env=dev -- python tools/push_notion_mirror.py --verify
 ```
 
-It compares every published block against git and writes nothing. Worth running if a diagram in Notion ever looks wrong, since the answer is either "somebody edited it here" or "the push never happened". It does not cover the editorial pages: those are meant to differ from their sources, so there is nothing to compare them against.
+It compares every published block against git and writes nothing. Worth running if a diagram in Notion ever looks wrong, since the answer is either "somebody edited it here" or "the push never happened".
+
+**What it covers is narrower than "the mirrored pages", and the boundary is worth knowing.** It
+compares mermaid code blocks belonging to `verbatim` entries. Nothing else, including the prose on
+those same pages.
+
+| On a mirrored page | Owner | Caught by |
+|--------------------|-------|-----------|
+| A mermaid block registered as `verbatim` | git | `--verify`, and overwritten by the pusher |
+| Headings and commentary around it | whoever writes them in Notion | nothing, deliberately |
+| An `editorial` page's whole body | whoever writes it in Notion | nothing. G15 only reports when the *source* moves |
+
+So a `verbatim` page is really a mixed page: machine-owned diagrams inside human-owned framing.
+That is intentional. The framing exists to make a diagram readable by someone who will not open the
+repository, it is written for that audience, and a generator would flatten it, which is the same
+argument that keeps the editorial pages editorial. The callout on **Architecture diagrams** says
+which half is which, because a blanket "do not edit this page" would be false and would stop people
+improving the words.
+
+The cost of that choice, stated plainly: page framing lives only in Notion, with no version history
+a reviewer would see. It is accepted for a few sentences of commentary. It would not be acceptable
+for a domain rule, which is exactly why the two state machines were moved into git.
 
 Both verbatim mirrors were published on 19 August 2026 and verified byte-identical to git. The `pending` flag they shipped with is gone; it exists for the window between registering a mirror and first publishing it, when the gate reports the mirror without failing, because there is no earlier state for it to have drifted from.
 
@@ -272,6 +293,12 @@ Both verbatim mirrors were published on 19 August 2026 and verified byte-identic
 **Verify writes by reading them back.** Grouping a database by Owner and counting rows catches a silent partial write in one query, which is faster and more reliable than trusting a create or update response. Three of the gotchas above were found this way and would not have been found otherwise.
 
 **Notion renders mermaid natively.** Diagrams are live code blocks rather than exported images, so they do not go stale the way a screenshot does. This is also what makes a verbatim mirror possible, and it is why the ASCII box-drawing diagrams in the documentation were converted to mermaid.
+
+**Truncating a diff hides the thing the diff exists to show.** `--verify` first printed the opening
+88 characters of each side, which for a mermaid block is the `flowchart TD` line and the first node,
+identical on both sides while the actual difference sat three lines down. It reported the mismatch
+correctly and then displayed two apparently equal strings. It prints a real line diff now. A check
+whose output cannot be acted on is only half a check.
 
 ---
 
