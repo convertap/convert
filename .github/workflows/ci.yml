@@ -212,14 +212,20 @@ jobs:
   #
   # Each job has its own switch, DEPLOY_TEST and DEPLOY_STAGING, so one
   # environment can be turned off without touching the other. Both are off
-  # until the variable is "true" and that environment holds a RAILWAY_TOKEN.
+  # until the variable is "true" and that environment holds a token.
   # Merging a deploy job that cannot authenticate would put a permanent red
   # job on main, and a red main everyone learns to ignore is worse than no
   # deploy job at all.
   #
-  # Railway project tokens are scoped to one environment (environmentId is
-  # required to mint one), so the test job holds a credential that cannot
-  # reach staging even if it tried.
+  # The credential is passed as RAILWAY_API_TOKEN, not RAILWAY_TOKEN. The CLI
+  # reads the two as different token types: RAILWAY_TOKEN must be a project
+  # token, and ours is workspace-scoped because minting a project token needs a
+  # verified account (ADR 0024, ADR 0026). A workspace token arriving as
+  # RAILWAY_TOKEN is rejected as Unauthorized. Only one of the two may be set;
+  # setting both is an error, so do not "try both".
+  #
+  # The environment secret is still named RAILWAY_TOKEN. That name now
+  # understates what it is, and ADR 0026 says why renaming it waits.
 
   deploy-test:
     name: Deploy to test
@@ -249,12 +255,12 @@ jobs:
       # branch pointer resolves to afterwards.
       - name: Deploy api
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: railway up --ci --service '@convert/api' --environment test --project "$RAILWAY_PROJECT"
 
       - name: Deploy web
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: railway up --ci --service '@convert/web' --environment test --project "$RAILWAY_PROJECT"
 
       # A deploy that reports success while the service is down is the failure
@@ -294,12 +300,12 @@ jobs:
 
       - name: Deploy api
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: railway up --ci --service '@convert/api' --environment staging --project "$RAILWAY_PROJECT"
 
       - name: Deploy web
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: railway up --ci --service '@convert/web' --environment staging --project "$RAILWAY_PROJECT"
 
       - name: Prove it serves
