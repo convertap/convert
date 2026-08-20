@@ -8,7 +8,7 @@ Mobile-first sales & lead management platform for Ghanaian SMEs. The workspace i
 2. **`docs/product-spec.md`**. Full product vision + commercial model, derived from `Convert_Pitch_Deck.pptx`. Reference for intent, not for scope. §12 holds open questions, §13 the deck-vs-scope divergences.
 3. **`docs/pre-development-checklist.md`**. What must be obtained, decided, or proven before implementation starts. IDs (E0–E7, L1–L4, R1–R9, A1–A6, S1–S7, P1–P6) are stable; cite them. §10 is the decision log, record decisions there as they land.
 4. **`docs/architecture.md`**. Target architecture. §3 the decided stack, §6 invariants I1–I12, §20 the decisions it still assumes, §21 how the rules are kept.
-5. **`docs/adr/`**. 23 decision records. 0001 and 0015–0023 Accepted; rest Proposed. Cite by number. Never edit an accepted Decision, supersede it.
+5. **`docs/adr/`**. 24 decision records. 0001 and 0015–0024 Accepted; rest Proposed. Cite by number. Never edit an accepted Decision, supersede it.
 6. **`docs/engineering-guardrails.md`**. Layout, the dependency rule, CI gates G1–G14, conventions. With `docs/code-review-checklist.md`, `docs/definition-of-done.md`, `docs/test-strategy.md`.
 7. **`docs/error-handling.md`**. Errors are first class (ADR 0018): one catalogue carrying status, retryability, and the sentence a person reads. Layers below the API throw without logging.
 8. **`docs/design-system.md`**. Shadcn primitives, Convert token tiers, domain tokens for stage/channel/status/window, accessibility and performance rules (ADR 0016).
@@ -98,6 +98,8 @@ Update it as part of the work, not as a separate chore:
   Infisical. Notion holds the reference only, never a token, connection string, or password.**
 - A sprint starts or ends: new Sprints row with one goal; at close, answer Goal met honestly
   and fill in What we learned. Two-week cadence, one Active sprint at a time.
+- Anything in the workspace changes by hand: add a Changelog row saying what and **why**, with
+  the pull request. Machine rows are written by the mirror pusher and need no help.
 - Weekly: refresh the status page. Four headings, shipped, next, blocked, needs a decision.
 
 **Mirrored documents are machine-checked (ADR 0021).** `docs/notion-mirror.json` registers every

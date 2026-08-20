@@ -29,6 +29,7 @@ One file per decision. Numbered, immutable once accepted, superseded rather than
 | [0021](./0021-mirror-notion-from-git-with-a-drift-gate.md) | Mirror Notion from git, and gate on drift rather than pushing automatically | Accepted |
 | [0022](./0022-staging-on-railway-in-amsterdam.md) | Staging on Railway in Amsterdam, database included | Accepted |
 | [0023](./0023-bound-every-ci-step-in-time.md) | Bound every CI step in time, and make apt wait deliberately | Accepted |
+| [0024](./0024-deploy-through-ci-not-straight-from-a-push.md) | Deploy through CI, not straight from a push | Accepted |
 
 Statuses: **Proposed** (written, not yet ratified) · **Accepted** (in force) · **Superseded** (replaced, kept for the record) · **Rejected** (considered and declined, kept so it is not re-litigated).
 
