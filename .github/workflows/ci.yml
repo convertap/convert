@@ -13,6 +13,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Not a secret: a project id is useless without a token (ADR 0024).
+  RAILWAY_PROJECT: f88057ad-7cda-4051-aaea-8d0c1a625682
+
 jobs:
   guardrails:
     name: G1-G2 boundaries and ADR discipline, G14-G15 secrets and mirror
@@ -196,3 +200,111 @@ jobs:
           # their declarations, so a filtered build alone fails on a clean checkout.
           pnpm build
           pnpm dlx @lhci/cli autorun --config=./lighthouserc.json
+
+  # ---------------------------------------------------------------- deployment
+  #
+  # Nothing deploys because a commit appeared on a branch: Railway's deployment
+  # triggers are deleted, and these jobs are the only path (ADR 0024). `needs`
+  # is the enforcement, so a deploy cannot start until every gate has passed.
+  #
+  # Each job has its own switch, DEPLOY_TEST and DEPLOY_STAGING, so one
+  # environment can be turned off without touching the other. Both are off
+  # until the variable is "true" and that environment holds a RAILWAY_TOKEN.
+  # Merging a deploy job that cannot authenticate would put a permanent red
+  # job on main, and a red main everyone learns to ignore is worse than no
+  # deploy job at all.
+  #
+  # Railway project tokens are scoped to one environment (environmentId is
+  # required to mint one), so the test job holds a credential that cannot
+  # reach staging even if it tried.
+
+  deploy-test:
+    name: Deploy to test
+    needs: [guardrails, quality, database, performance]
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/develop'
+      && vars.DEPLOY_TEST == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: test
+      url: https://convertweb-test.up.railway.app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install the Railway CLI
+        run: npm install -g @railway/cli
+
+      # Deployed one service at a time rather than a whole environment, so a
+      # failure names which one. `railway up` uploads this checkout, so the
+      # artifact is the commit the gates ran against rather than whatever the
+      # branch pointer resolves to afterwards.
+      - name: Deploy api
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: railway up --ci --service '@convert/api' --environment test --project "$RAILWAY_PROJECT"
+
+      - name: Deploy web
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: railway up --ci --service '@convert/web' --environment test --project "$RAILWAY_PROJECT"
+
+      # A deploy that reports success while the service is down is the failure
+      # mode worth catching, so ask the running thing rather than trusting the
+      # exit code.
+      - name: Prove it serves
+        run: |
+          for url in \
+            https://convertapi-test.up.railway.app/health \
+            https://convertweb-test.up.railway.app/; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 --retry 5 --retry-delay 10 "$url")
+            echo "$url -> $code"
+            [ "$code" = "200" ] || exit 1
+          done
+
+  deploy-staging:
+    name: Deploy to staging
+    needs: [guardrails, quality, database, performance]
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && vars.DEPLOY_STAGING == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: staging
+      url: https://convertweb-production.up.railway.app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install the Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy api
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: railway up --ci --service '@convert/api' --environment staging --project "$RAILWAY_PROJECT"
+
+      - name: Deploy web
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: railway up --ci --service '@convert/web' --environment staging --project "$RAILWAY_PROJECT"
+
+      - name: Prove it serves
+        run: |
+          for url in \
+            https://convertapi-production.up.railway.app/health \
+            https://convertweb-production.up.railway.app/; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 --retry 5 --retry-delay 10 "$url")
+            echo "$url -> $code"
+            [ "$code" = "200" ] || exit 1
+          done
