@@ -51,7 +51,10 @@ USES = re.compile(r"^(?P<indent>\s*(?:-\s*)?)uses:\s*(?P<action>[^\s@#]+)@\S+\s*
 
 
 def run(args: list[str]) -> tuple[int, str]:
-    result = subprocess.run(args, capture_output=True, text=True)
+    # git speaks UTF-8. Decoding with the locale encoding instead gives cp1252 on a
+    # Windows shell, and then a `§` read out of history does not match the same `§`
+    # read from the working tree — a content comparison fails for no visible reason.
+    result = subprocess.run(args, capture_output=True, encoding="utf8")
     return result.returncode, result.stdout
 
 
