@@ -11,7 +11,12 @@ build output stops being scanned is a bug fix, not an architectural decision, an
 demanding an ADR for it would train people to write meaningless ADRs, which is worse
 than not having the gate.
 
-For the other watched files any change counts, because they have no comparable
+The CI workflow gets the same treatment for the same reason (ADR 0025). Which version
+of `actions/checkout` is pinned is a fact with an upstream owner, not a decision, so a
+diff that only moves version pins passes. Adding or removing a gate step, widening a
+trigger, cutting a `needs:` edge or swapping the action itself still needs an ADR.
+
+For the remaining watched files any change counts, because they have no comparable
 mechanical/semantic split.
 
 Usage:
@@ -22,19 +27,27 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 
 BOUNDARIES = ".boundaries.json"
+WORKFLOW = ".github/workflows/ci.yml"
 WATCHED = (
     BOUNDARIES,
-    ".github/workflows/ci.yml",
+    WORKFLOW,
     "docs/engineering-guardrails.md",
 )
 ADR_DIR = "docs/adr/"
 
 # The parts of .boundaries.json that encode an architectural decision.
 SEMANTIC_KEYS = ("aliasPrefix", "layers", "compositionRoots")
+
+# `uses: owner/repo@ref`, with the trailing `# v4.2.0` comment Dependabot writes when
+# an action is pinned to a SHA. The ref and that comment together are the pin; the
+# action's identity is the part that carries a decision. A local action (`./path`) has
+# no `@` and so does not match, which is the right answer — there is no pin to ignore.
+USES = re.compile(r"^(?P<indent>\s*(?:-\s*)?)uses:\s*(?P<action>[^\s@#]+)@\S+\s*(?:#.*)?$")
 
 
 def run(args: list[str]) -> tuple[int, str]:
@@ -54,23 +67,40 @@ def changed_files(ref: str) -> list[str] | None:
     return [line.strip() for line in out.splitlines() if line.strip()]
 
 
-def semantic_boundaries(ref: str | None) -> dict | None:
-    """Semantic subset of .boundaries.json at `ref`, or from the working tree."""
+def contents(ref: str | None, path: str) -> str | None:
+    """`path` at `ref`, or from the working tree when `ref` is None."""
     if ref is None:
         try:
-            with open(BOUNDARIES, encoding="utf8") as fh:
-                data = json.load(fh)
-        except (OSError, json.JSONDecodeError):
+            with open(path, encoding="utf8") as fh:
+                return fh.read()
+        except OSError:
             return None
-    else:
-        code, out = run(["git", "show", f"{ref}:{BOUNDARIES}"])
-        if code != 0:
-            return None
-        try:
-            data = json.loads(out)
-        except json.JSONDecodeError:
-            return None
+    code, out = run(["git", "show", f"{ref}:{path}"])
+    return out if code == 0 else None
+
+
+def semantic_boundaries(ref: str | None) -> dict | None:
+    """Semantic subset of .boundaries.json at `ref`, or from the working tree."""
+    text = contents(ref, BOUNDARIES)
+    if text is None:
+        return None
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None
     return {key: data.get(key) for key in SEMANTIC_KEYS}
+
+
+def semantic_workflow(ref: str | None) -> str | None:
+    """The workflow at `ref` with every action's version pin stripped out."""
+    text = contents(ref, WORKFLOW)
+    if text is None:
+        return None
+    lines = []
+    for line in text.splitlines():
+        match = USES.match(line)
+        lines.append(f"{match['indent']}uses: {match['action']}" if match else line)
+    return "\n".join(lines)
 
 
 def main() -> int:
@@ -94,6 +124,13 @@ def main() -> int:
         if before is not None and after is not None and before == after:
             touched.remove(BOUNDARIES)
             print(f"{BOUNDARIES} changed, but no layer, import rule, or composition root moved")
+
+    if WORKFLOW in touched:
+        before = semantic_workflow(ref)
+        after = semantic_workflow(None)
+        if before is not None and after is not None and before == after:
+            touched.remove(WORKFLOW)
+            print(f"{WORKFLOW} changed, but only the version an action is pinned to")
 
     if not touched:
         print("adr discipline ok — no rule changed")

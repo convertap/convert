@@ -4,7 +4,7 @@ How the architecture in [`architecture.md`](./architecture.md) stays true once s
 
 Stack is settled: **Next.js web, NestJS on the Fastify adapter, one worker, one Postgres** (ADR 0001, checklist S1).
 
-**Last updated:** 2026-08-18
+**Last updated:** 2026-08-20
 
 ---
 
@@ -81,7 +81,7 @@ Two kinds. A machine gate blocks the merge; a human gate is a checklist line som
 | # | Gate | Kind | Blocks |
 |---|------|------|--------|
 | G1 | Layer boundaries clean | machine | merge |
-| G2 | An ADR accompanies any `.boundaries.json` change | machine | merge |
+| G2 | An ADR accompanies any change to a rule: `.boundaries.json`, `ci.yml`, or this document | machine | merge |
 | G3 | Type check passes with no `any` escape hatches added | machine | merge |
 | G4 | Lint passes, no new warnings | machine | merge |
 | G5 | Unit tests pass | machine | merge |
@@ -258,4 +258,11 @@ emergencies, and CI still gates the merge.
 
 Guardrails encode decisions, and decisions get superseded. The path is: open an ADR that supersedes the old one, change `.boundaries.json` or the gate in the same commit, and say in the PR body which ADR authorises it.
 
-What is not acceptable is editing a rule to make a red build green. G2 exists specifically to catch that: a `.boundaries.json` change with no accompanying ADR fails CI.
+What is not acceptable is editing a rule to make a red build green. G2 exists specifically to catch that: a change to `.boundaries.json`, `.github/workflows/ci.yml`, or this document with no accompanying ADR fails CI.
+
+G2 asks whether a *rule* moved, not whether bytes moved, and it is narrowed twice so that it keeps being believed (ADR 0025):
+
+- In `.boundaries.json` only the layers, import rules and composition roots count. Editing the `ignore` list so build output stops being scanned is a bug fix.
+- In `ci.yml` the version an action is pinned to does not count, so `actions/checkout@v4` becoming `@v7` passes on its own CI evidence. Adding or removing a gate step, widening a trigger, cutting a `needs:` edge, rebinding a deploy environment, or swapping the action itself still needs an ADR.
+
+Both carve-outs exist for the same reason: a gate that fires on changes it was never aimed at gets overridden, and an overridden gate protects nothing.
