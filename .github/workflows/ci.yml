@@ -227,8 +227,19 @@ jobs:
   # The environment secret is still named RAILWAY_TOKEN. That name now
   # understates what it is, and ADR 0026 says why renaming it waits.
 
+  #
+  # One job per service, as a matrix, rather than two `railway up` calls in one
+  # job. Railway queues builds: on 20 August each build sat ~10 minutes behind
+  # "scheduling build on Metal builder", two serial builds blew the 20-minute
+  # bound, and the job was cancelled *after* `railway up` had already handed the
+  # build over. So both services deployed and "Prove it serves" never ran, which
+  # is worse than a red job — it is an unverified deploy that looks like a
+  # cancellation. Split, the builds run concurrently, each carries its own bound,
+  # and each proves its own service. `fail-fast: false` matters: without it a
+  # failing api cancels the web deploy mid-build (ADR 0027).
+
   deploy-test:
-    name: Deploy to test
+    name: Deploy ${{ matrix.name }} to test
     needs: [guardrails, quality, database, performance]
     if: >-
       github.event_name == 'push'
@@ -236,9 +247,19 @@ jobs:
       && vars.DEPLOY_TEST == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: api
+            service: '@convert/api'
+            probe: https://convertapi-test.up.railway.app/health
+          - name: web
+            service: '@convert/web'
+            probe: https://convertweb-test.up.railway.app/
     environment:
       name: test
-      url: https://convertweb-test.up.railway.app
+      url: ${{ matrix.probe }}
     steps:
       - uses: actions/checkout@v7
 
@@ -249,35 +270,25 @@ jobs:
       - name: Install the Railway CLI
         run: npm install -g @railway/cli
 
-      # Deployed one service at a time rather than a whole environment, so a
-      # failure names which one. `railway up` uploads this checkout, so the
-      # artifact is the commit the gates ran against rather than whatever the
-      # branch pointer resolves to afterwards.
-      - name: Deploy api
+      # `railway up` uploads this checkout, so the artifact is the commit the
+      # gates ran against rather than whatever the branch pointer resolves to
+      # afterwards.
+      - name: Deploy ${{ matrix.name }}
         env:
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        run: railway up --ci --service '@convert/api' --environment test --project "$RAILWAY_PROJECT"
-
-      - name: Deploy web
-        env:
-          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        run: railway up --ci --service '@convert/web' --environment test --project "$RAILWAY_PROJECT"
+        run: railway up --ci --service '${{ matrix.service }}' --environment test --project "$RAILWAY_PROJECT"
 
       # A deploy that reports success while the service is down is the failure
       # mode worth catching, so ask the running thing rather than trusting the
       # exit code.
       - name: Prove it serves
         run: |
-          for url in \
-            https://convertapi-test.up.railway.app/health \
-            https://convertweb-test.up.railway.app/; do
-            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 --retry 5 --retry-delay 10 "$url")
-            echo "$url -> $code"
-            [ "$code" = "200" ] || exit 1
-          done
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 --retry 5 --retry-delay 10 "${{ matrix.probe }}")
+          echo "${{ matrix.probe }} -> $code"
+          [ "$code" = "200" ] || exit 1
 
   deploy-staging:
-    name: Deploy to staging
+    name: Deploy ${{ matrix.name }} to staging
     needs: [guardrails, quality, database, performance]
     if: >-
       github.event_name == 'push'
@@ -285,9 +296,19 @@ jobs:
       && vars.DEPLOY_STAGING == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: api
+            service: '@convert/api'
+            probe: https://convertapi-production.up.railway.app/health
+          - name: web
+            service: '@convert/web'
+            probe: https://convertweb-production.up.railway.app/
     environment:
       name: staging
-      url: https://convertweb-production.up.railway.app
+      url: ${{ matrix.probe }}
     steps:
       - uses: actions/checkout@v7
 
@@ -298,22 +319,13 @@ jobs:
       - name: Install the Railway CLI
         run: npm install -g @railway/cli
 
-      - name: Deploy api
+      - name: Deploy ${{ matrix.name }}
         env:
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        run: railway up --ci --service '@convert/api' --environment staging --project "$RAILWAY_PROJECT"
-
-      - name: Deploy web
-        env:
-          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        run: railway up --ci --service '@convert/web' --environment staging --project "$RAILWAY_PROJECT"
+        run: railway up --ci --service '${{ matrix.service }}' --environment staging --project "$RAILWAY_PROJECT"
 
       - name: Prove it serves
         run: |
-          for url in \
-            https://convertapi-production.up.railway.app/health \
-            https://convertweb-production.up.railway.app/; do
-            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 --retry 5 --retry-delay 10 "$url")
-            echo "$url -> $code"
-            [ "$code" = "200" ] || exit 1
-          done
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 --retry 5 --retry-delay 10 "${{ matrix.probe }}")
+          echo "${{ matrix.probe }} -> $code"
+          [ "$code" = "200" ] || exit 1
