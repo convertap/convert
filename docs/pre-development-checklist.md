@@ -4,7 +4,7 @@ What must be settled before Phase 4 implementation starts. Two of these buckets 
 
 Scope authority remains [`mvp-scope.md`](./mvp-scope.md). This document does not change scope; it lists what has to be decided, obtained, or proven first.
 
-**Last updated:** 2026-08-19
+**Last updated:** 2026-08-20
 
 ## Status legend
 
@@ -126,9 +126,9 @@ R3 is not a permissions feature. It decides whether every query is owner-scoped 
 
 | ID | Decision | Notes | Status |
 |----|----------|-------|--------|
-| A1 | Login method | Reps are phone-first and many have no working email. Options: email + password, phone + OTP (costs SMS per login), or magic link over WhatsApp/SMS | ☐ |
+| A1 | Login method | **Decided 2026-08-20:** identity accepts email *or* phone (at least one, each unique); passwordless, the credential is always a one-time code; delivered through a `VerificationPort` with Fabric behind it, over email or SMS (WhatsApp once E4 approves an authentication template). 15-minute access token, 30-day rotating refresh. ADR 0029 | ☑ |
 | A2 | Does a user belong to one organization, or many? | Determines the invite flow and the identity model | ☐ |
-| A3 | Invite acceptance channel | If A1 is not email, invites cannot be email-only | ☐ |
+| A3 | Invite acceptance channel | A1 settled the identifier: an invite is addressed to whichever identifier the owner enters, and accepted by the same one-time code flow. Remaining question is only the wording and expiry of an invite | ◐ |
 | A4 | Tenancy model | Single database, `org_id` on every row, enforced at the query layer. Do not use schema-per-tenant at this size | ☐ |
 | A5 | Entitlement boundary | MVP ships no billing, but tier caps (contacts, seats, messages) must not be hardcoded. Leave a layer that can enforce them later. Pro-tier API access is the first thing this must gate | ☐ |
 | A6 | Principal model | Model the actor as a principal (user session **or** API client) from day one. The deck sells a Pro-tier public API (slide 6, Phase 3), if endpoints assume a session, adding clients later touches every route | ☐ |
@@ -257,4 +257,10 @@ Fill in as decisions land. Record the decision, not the discussion.
 
 | Date | ID | Decision | Decided by |
 |------|----|----------|------------|
-| | | | |
+| 2026-08-18 | S1 | Next.js web, NestJS on Fastify api, one worker, one PostgreSQL, pnpm monorepo. ADR 0001 | Engineering |
+| 2026-08-18 | S7 | OpenAPI generated with `@nestjs/swagger`, committed, drift fails G10. ADR 0015 | Engineering |
+| 2026-08-20 | A1 | Email *or* phone as identifier; passwordless one-time code as the only credential; Fabric behind a `VerificationPort`. ADR 0029 | Product owner |
+
+Rows for S2, S3 and S6 are outstanding: each has a decision recorded in an ADR or enforced in CI
+without ever reaching this table, which is why their status columns above are still wrong. That is
+tracked in `HANDOFF.md` §4.
