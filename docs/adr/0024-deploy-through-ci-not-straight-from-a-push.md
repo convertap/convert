@@ -42,15 +42,19 @@ Each deploys with `railway up -s <service> -e <environment> --ci`, uploading the
 
 This is not decoration: merging a deployment job that cannot authenticate would put a red job on `main` immediately, and a red `main` that everybody learns to ignore is worse than no deployment job.
 
-**Railway project tokens are scoped to a single environment** — `environmentId` is required to mint one — so this is stronger than convention. The job deploying to `test` holds a credential that cannot reach `staging` at all.
-
 **Tokens live as GitHub environment secrets** rather than one repository-wide secret, so each job can only read its own.
+
+**The token is workspace-scoped, not environment-scoped, and that is a compromise rather than the design.** Railway's project token is scoped to one environment — `environmentId` is required to mint one — and would have meant the `test` job holding a credential that could not reach `staging` at all. Creating one requires a verified account, and verification wants a payment method: the GitHub route the trial offers instead is already spent, because the GitHub account is connected and the account is still unverified, most likely because that account is too new to satisfy the heuristic.
+
+Account-level and workspace-level tokens have no such gate. So the token in use is scoped to the workspace, which reaches both environments and any project added later. Stated plainly because the earlier draft of this record claimed the stronger property: one leaked secret in a build log now reaches staging as well as test.
+
+In proportion, today: the blast radius is two environments with empty databases, no migrations, and no customer data. It stops being acceptable the moment production exists or a real WhatsApp credential lands, and the fix is a verified account and two project tokens, not a redesign.
 
 ## Consequences
 
 **Positive:** a deploy now requires every gate to have passed, and says so in a place a person can audit — GitHub records each deployment against its environment with the URL. The branch policies start binding: `staging` only from `main`, `test` only from `develop`. The commit deployed is the commit tested. And the sequencing point is now ours, so a required reviewer on `staging`, a migration step before the app starts, or a smoke test after it, are configuration rather than a rewrite.
 
-**Negative / cost:** deploys get slower, because they wait for the full gate suite rather than starting immediately — several minutes rather than seconds, which is the correct trade for staging and mildly annoying on `test`. A Railway token now lives in GitHub as well as Infisical, which is a second place a credential exists; ADR 0020 puts secrets in Infisical, and a GitHub Actions job cannot read from Infisical without a credential of its own, so this is a genuine exception rather than an oversight, and the credentials register records it. `railway up` uploads the working tree instead of Railway pulling from the repository, so `.gitignore` and `.railwayignore` now affect what gets built. And the deployment path is ours to maintain: when it breaks, nothing deploys, where previously Railway would have.
+**Negative / cost:** the token is broader than intended, as above, so a credential leak reaches both environments rather than one. Deploys get slower, because they wait for the full gate suite rather than starting immediately — several minutes rather than seconds, which is the correct trade for staging and mildly annoying on `test`. A Railway token now lives in GitHub as well as Infisical, which is a second place a credential exists; ADR 0020 puts secrets in Infisical, and a GitHub Actions job cannot read from Infisical without a credential of its own, so this is a genuine exception rather than an oversight, and the credentials register records it. `railway up` uploads the working tree instead of Railway pulling from the repository, so `.gitignore` and `.railwayignore` now affect what gets built. And the deployment path is ours to maintain: when it breaks, nothing deploys, where previously Railway would have.
 
 **Rejected alternatives:**
 
