@@ -26,11 +26,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -70,13 +70,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Detect workspace
         id: ws
         run: echo "ready=$([ -f pnpm-lock.yaml ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         if: steps.ws.outputs.ready == 'yes'
 
       - uses: actions/setup-node@v4
@@ -111,7 +111,7 @@ jobs:
           git diff --exit-code -- apps/api/openapi.json \
             || { echo "::error::openapi.json is stale. Run 'pnpm --filter @convert/api openapi:generate' and commit the result."; exit 1; }
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: G6 invariant coverage
@@ -139,7 +139,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Detect migrations
         id: mig
@@ -147,7 +147,7 @@ jobs:
           count=$(find packages/infra/src/db/migrations -type f 2>/dev/null | wc -l)
           echo "ready=$([ "$count" -gt 0 ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         if: steps.mig.outputs.ready == 'yes'
       - uses: actions/setup-node@v4
         if: steps.mig.outputs.ready == 'yes'
@@ -179,13 +179,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Detect web app
         id: web
         run: echo "ready=$([ -f apps/web/package.json ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         if: steps.web.outputs.ready == 'yes'
       - uses: actions/setup-node@v4
         if: steps.web.outputs.ready == 'yes'
@@ -240,7 +240,7 @@ jobs:
       name: test
       url: https://convertweb-test.up.railway.app
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -289,7 +289,7 @@ jobs:
       name: staging
       url: https://convertweb-production.up.railway.app
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
