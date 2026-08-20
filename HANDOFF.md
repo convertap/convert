@@ -54,7 +54,7 @@ was renamed. Cosmetic, and worth knowing before someone reads too much into a ho
 `needs: [guardrails, quality, database, performance]` and bound to a GitHub environment so the
 branch policies bind (ADR 0024).
 
-**`deploy-test` now works, and it took two fixes to get there.** The first was PR #24: the push
+**`deploy-test` now works, and it took three fixes to get there.** The first was PR #24: the push
 trigger listed `main` only, so the job was unreachable. With that merged, `develop` was
 fast-forwarded to `main` and the job ran for the first time — and failed immediately:
 
@@ -78,16 +78,40 @@ rejected — and the error names `RAILWAY_TOKEN`, which reads as "your token is 
 is fine. Fixed in PR #26, ADR 0026. **Only one of the two may be set; setting both is an error**,
 so exporting both is not a fallback.
 
-Run `32371549141` on `develop` (sha `3848654`) is the proof: all four gate jobs green,
-`deploy-staging` correctly skipped, `Deploy to test` success, and its last step reported
+**And then it was cancelled, which found a second, worse bug.** The next push deployed both
+services from one job on a day when Railway queued each build for about ten minutes behind
+`scheduling build on Metal builder`. Two serial builds blew the 20-minute bound and GitHub
+cancelled the job — *after* `railway up` had already handed the build over. Railway carried on;
+both services deployed and served 200. `Prove it serves` never ran. So the deploy happened,
+nothing verified it, and the run reported a cancellation, which reads as "nothing happened". A red
+job is honest; that was not.
 
-```
-https://convertapi-test.up.railway.app/health -> 200
-https://convertweb-test.up.railway.app/ -> 200
-```
+Not the action bumps: `checkout@v7` and `setup-node@v7` ran clean, post-run steps included, and
+the stall is inside `railway up`. Not a busted build cache either — the eslint 10 lockfile change
+was already present in the fast run.
 
-Both were still 200 on a manual curl afterwards, so this is a running service and not a green
-tick.
+**Fixed by one deploy job per service** (a matrix, both environments), ADR 0027. `timeout-minutes`
+applies per matrix instance so each service gets the full 20 minutes instead of sharing;
+the builds overlap; and each job proves the service it deployed, so a cancellation can strand at
+most one and the job name says which. `fail-fast: false` is load-bearing — the default cancels the
+web deploy mid-build when api fails, recreating the hole.
+
+Run `32380276107` is the proof, and it landed on another slow day, which makes it the better
+proof:
+
+| Job | Started | Finished | Probe |
+|-----|---------|----------|-------|
+| `Deploy api to test` | 14:29:16 | 14:39:41 | `/health` → 200 |
+| `Deploy web to test` | 14:29:16 | 14:39:37 | `/` → 200 |
+
+Identical start times, so they genuinely ran concurrently, each about ten minutes inside its own
+bound. **Under the old serial design that run would have been cancelled too.** Both endpoints were
+still 200 on a manual curl afterwards, so these are running services and not a green tick.
+
+Two things to expect rather than be surprised by: a skipped deploy shows as the unexpanded
+`Deploy ${{ matrix.name }} to staging`, because a skipped job never expands its matrix; and each
+push now registers two deployments against the same GitHub environment, so any future protection
+rule on `test` or `staging` gates both jobs independently.
 
 Two unknowns this run also settled, which nothing else could:
 

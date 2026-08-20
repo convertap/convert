@@ -81,4 +81,13 @@ A matrix rather than two hand-written jobs because a matrix *is* separate jobs, 
 
 The jobs enforce themselves: each ends by curling its own service and failing on anything but a 200, so an unverified deploy is now structurally hard rather than merely unlikely.
 
-The claim that concurrency actually helps is not proven yet — it needs a push to `develop` on a day when Railway queues builds, which is not something to arrange on purpose. What the next push does prove is that the matrix is wired correctly and both probes still return 200. Until a slow day recurs, treat the wall-clock benefit as expected rather than measured.
+**Measured, on the first run after merging.** Run `32380276107` on `develop` hit the same slow builder as the cancelled run — about ten and a half minutes per build, not the three-minute best case:
+
+| Job | Started | Finished | Probe |
+|-----|---------|----------|-------|
+| `Deploy api to test` | 14:29:16 | 14:39:41 | `/health` → 200 |
+| `Deploy web to test` | 14:29:16 | 14:39:37 | `/` → 200 |
+
+Identical start times, so the builds genuinely overlapped, and each finished about ten minutes inside its own 20-minute bound. **Under the previous serial design this run would have been cancelled again**, because the two builds together would have exceeded twenty minutes. The concurrency is therefore load-bearing rather than a nicety, and the wall-clock claim is measured rather than expected.
+
+One cosmetic wrinkle: on a run where the deploy is skipped, the check appears as the unexpanded `Deploy ${{ matrix.name }} to staging`, because a skipped job never expands its matrix. It renders correctly (`Deploy api to test`) whenever the job actually runs.
