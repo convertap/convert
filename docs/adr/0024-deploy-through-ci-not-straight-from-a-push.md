@@ -63,6 +63,12 @@ In proportion, today: the blast radius is two environments with empty databases,
 - *Deploy on a tag rather than a branch push.* Right for production later, wrong for two environments that exist to be looked at continuously.
 - *Keep the triggers and add the workflow.* Both paths deploying the same environment, racing, with two sources of truth for what is running. The point of this change is that there is one.
 
+## A trap worth recording
+
+The workflow's `on.push.branches` originally listed `main` only, so pushing to `develop` fired nothing at all and `deploy-test`'s condition was unreachable. Both deploy jobs reported `skipping` on every pull request, which looked exactly like the intended inert state, so nothing about it read as wrong.
+
+It surfaced only by pushing to `develop` and finding no workflow run. A job whose trigger cannot fire is indistinguishable from a job that is correctly switched off, which makes this the kind of mistake that survives a review. Any future environment added here needs its branch in that list as well as its own job.
+
 ## Enforcement
 
 The `needs:` list is the enforcement: the deploy jobs cannot start until every gate has succeeded. Deleting the deployment triggers is what stops the other path, and it is the step that would silently undo this decision if someone recreated one — a trigger reappearing on either environment means deployments have two sources again.

@@ -2,7 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # develop is here because deploy-test keys on it (ADR 0024). Without it the
+    # workflow never fires for develop, so the deploy job's condition is
+    # unreachable and the test environment silently never updates.
+    branches: [main, develop]
   pull_request:
 
 # Gates G1-G13 from docs/engineering-guardrails.md §3.
