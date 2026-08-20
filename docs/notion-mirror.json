@@ -1,6 +1,7 @@
 {
-  "comment": "Which Notion pages are derived from this repository, and what they are derived from. Gate G15 compares the hash below against the working tree, so drift is caught without network access. `pending: true` means the page has never been machine-published and the gate reports it without failing. See docs/notion-workspace.md section 9 and ADR 0021.",
+  "comment": "Which Notion pages are derived from this repository, and what they are derived from. Gate G15 compares the hash below against the working tree, so drift is caught without network access. `pending: true` means the page has never been machine-published and the gate reports it without failing. `changelogDatabase` is the Notion database the pusher appends a row to after a successful push, so machine-driven changes record themselves. See docs/notion-workspace.md section 9 and ADR 0021.",
   "workspace": "https://app.notion.com/p/3c14771f641e809abeb6ddf613dabc2d",
+  "changelogDatabase": "59fd0931-4930-4c65-9afb-038dc1996daa",
   "mirrors": [
     {
       "title": "Architecture diagrams",
