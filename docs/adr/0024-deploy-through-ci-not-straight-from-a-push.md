@@ -38,9 +38,13 @@ Two jobs, each bound to a GitHub environment, which is what makes the branch pol
 
 Each deploys with `railway up -s <service> -e <environment> --ci`, uploading the checked-out commit. The artifact deployed is therefore the exact tree the gates ran against, rather than whatever a branch pointer resolves to afterwards.
 
-**Both jobs are inert until a repository variable turns them on.** `DEPLOY_VIA_CI` must equal `true`, and the token must exist. This is not decoration: merging a deployment job that cannot authenticate would put a red job on `main` immediately, and a red `main` that everybody learns to ignore is worse than no deployment job.
+**Each job has its own switch, and both start off.** `DEPLOY_TEST` and `DEPLOY_STAGING` must equal `true`, and that environment must hold a token. Two switches rather than one because the environments have different lifetimes: `staging` exists for stakeholder demos and there is nothing to demo yet, so it is off and its compute is scaled to zero, while `test` is where work actually lands. Turning one off must not require touching the other, or the cheap decision becomes a code change.
 
-**Tokens are per environment, scoped as GitHub environment secrets** rather than one repository-wide secret, so the job that deploys to `test` cannot reach `staging`.
+This is not decoration: merging a deployment job that cannot authenticate would put a red job on `main` immediately, and a red `main` that everybody learns to ignore is worse than no deployment job.
+
+**Railway project tokens are scoped to a single environment** — `environmentId` is required to mint one — so this is stronger than convention. The job deploying to `test` holds a credential that cannot reach `staging` at all.
+
+**Tokens live as GitHub environment secrets** rather than one repository-wide secret, so each job can only read its own.
 
 ## Consequences
 

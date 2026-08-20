@@ -207,10 +207,16 @@ jobs:
   # triggers are deleted, and these jobs are the only path (ADR 0024). `needs`
   # is the enforcement, so a deploy cannot start until every gate has passed.
   #
-  # Both jobs stay inert until the DEPLOY_VIA_CI repository variable is "true"
-  # and the environment holds a RAILWAY_TOKEN. Merging a deploy job that cannot
-  # authenticate would put a permanent red job on main, and a red main that
-  # everyone learns to ignore is worse than no deploy job at all.
+  # Each job has its own switch, DEPLOY_TEST and DEPLOY_STAGING, so one
+  # environment can be turned off without touching the other. Both are off
+  # until the variable is "true" and that environment holds a RAILWAY_TOKEN.
+  # Merging a deploy job that cannot authenticate would put a permanent red
+  # job on main, and a red main everyone learns to ignore is worse than no
+  # deploy job at all.
+  #
+  # Railway project tokens are scoped to one environment (environmentId is
+  # required to mint one), so the test job holds a credential that cannot
+  # reach staging even if it tried.
 
   deploy-test:
     name: Deploy to test
@@ -218,7 +224,7 @@ jobs:
     if: >-
       github.event_name == 'push'
       && github.ref == 'refs/heads/develop'
-      && vars.DEPLOY_VIA_CI == 'true'
+      && vars.DEPLOY_TEST == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment:
@@ -267,7 +273,7 @@ jobs:
     if: >-
       github.event_name == 'push'
       && github.ref == 'refs/heads/main'
-      && vars.DEPLOY_VIA_CI == 'true'
+      && vars.DEPLOY_STAGING == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment:
