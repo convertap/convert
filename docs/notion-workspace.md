@@ -46,6 +46,7 @@ Diagrams are the one place that rule needs help, because a diagram has two audie
 Convert                              (in Team HQ, not Private)
 ├── Start here                       current state, navigation, what to read first
 ├── Weekly status                    shipped, next, blocked, needs a decision, grouped by person
+├── Changelog                        database: what changed here, when, and why
 ├── Product
 │   ├── What we are building         stakeholder-readable mirror of the scope
 │   ├── Deck vs reality              the ten divergences from the pitch
@@ -138,6 +139,37 @@ Two-week cadence is a default, not a decision anyone has ratified. It sits along
 
 ---
 
+## 4a. Changelog
+
+Notion already records when a page was last edited, and page history shows it. What it cannot
+give you is the workspace as one feed, or the reason a page changed. That second column is the
+one that earns this database its keep: six months from now, "Fabric named as the messaging
+provider" is useful and "edited 3 hours ago" is not.
+
+Each row carries what changed, the date, the pages touched, why, and the pull request where
+there is one. **Kind** separates a hand edit from a `Machine` row, and that distinction is the
+point rather than decoration: a `Machine` row means the mirror pusher wrote the page, so it
+matches git exactly and there is nothing to review.
+
+**The machine rows write themselves.** `tools/push_notion_mirror.py` appends a row after a
+publish, because the pusher is the only thing that knows a machine changed a page. Relying on
+someone to remember is what already failed once: four diagrams were never copied across and two
+lived only in Notion, which is why §9 exists at all.
+
+Two properties worth knowing:
+
+- **A run that changes nothing writes nothing.** The pusher compares each block before writing
+  and only logs pages it actually changed. Otherwise every run would add a row claiming a
+  republish, and a log full of no-ops is a log nobody reads.
+- **A failed changelog write does not fail the publish.** The pages are already updated by that
+  point, so exiting non-zero would claim the publish failed when it did not. It warns instead,
+  and the usual cause is the integration not being shared into the Changelog database.
+
+`--no-changelog` suppresses the row, which is right when restoring a page after a test rather
+than making a real change.
+
+---
+
 ## 5. Risks and Sessions
 
 **Risks** holds ten rows with likelihood, impact, mitigation, and an owner who can actually act. Impact includes *Ends the project*, used for the two that genuinely could: WhatsApp turning out shallower than the pitch assumes, and reps continuing to use personal WhatsApp instead of the shared record.
@@ -179,6 +211,7 @@ Notion goes stale by default, and a stale stakeholder page is worse than none be
 | A sprint ends | Goal met answered honestly, and What we learned filled in |
 | Weekly | Status page: shipped, next, blocked, and what each person owes |
 | A mirrored document changes in git | G15 fails the build and names the page. See §9 |
+| Anything here changes by hand | Changelog row: what, why, and the pull request if there is one |
 
 The weekly status is the one a stakeholder actually reads. Four headings, no prose padding, and the decisions grouped by the person who owes them.
 

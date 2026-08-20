@@ -37,6 +37,7 @@ import os
 import sys
 import urllib.error
 import urllib.request
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -92,9 +93,14 @@ def page_children(page_id: str, token: str) -> list[dict]:
         cursor = payload["next_cursor"]
 
 
-def mermaid_block_ids(page_id: str, token: str) -> list[str]:
+def mermaid_blocks(page_id: str, token: str) -> list[dict]:
+    """The mermaid code blocks on a page, in document order.
+
+    Returns whole blocks rather than ids, because the caller needs both the id to write to
+    and the current contents to decide whether writing is necessary at all.
+    """
     return [
-        b["id"]
+        b
         for b in page_children(page_id, token)
         if b["type"] == "code" and b["code"].get("language") == "mermaid"
     ]
@@ -122,11 +128,7 @@ def verify(manifest: dict, token: str) -> int:
     for mirror in manifest["mirrors"]:
         if mirror["kind"] != "verbatim":
             continue
-        blocks = [
-            b
-            for b in page_children(mirror["page"], token)
-            if b["type"] == "code" and b["code"].get("language") == "mermaid"
-        ]
+        blocks = mermaid_blocks(mirror["page"], token)
         for entry in mirror["diagrams"]:
             n = entry["page_block"]
             if n >= len(blocks):
@@ -146,15 +148,70 @@ def verify(manifest: dict, token: str) -> int:
     return bad
 
 
-def push(manifest: dict, token: str, dry_run: bool) -> list[str]:
-    """Overwrite verbatim mirrors. Returns the titles that are now current in Notion."""
-    pushed = []
+def log_change(manifest: dict, token: str, titles: list[str], today: str) -> None:
+    """Append one row to the Notion changelog describing what was just published.
+
+    The pusher is the only thing that knows a machine changed a page, so it is the only
+    thing that can record it without someone remembering to. Discipline is exactly what
+    failed for the diagrams before this pipeline existed: four were never copied across
+    and two lived only in Notion.
+
+    A failure here is reported and does not fail the run. The push has already happened by
+    this point, and exiting non-zero afterwards would claim the publish failed when it did
+    not. The most likely cause is the integration not being shared into the database.
+    """
+    database = manifest.get("changelogDatabase")
+    if not database:
+        return
+
+    def text(value: str) -> dict:
+        return {"rich_text": [{"text": {"content": value}}]}
+
+    body = {
+        "parent": {"database_id": database},
+        "properties": {
+            "Change": {
+                "title": [
+                    {"text": {"content": f"Diagrams republished from git ({len(titles)} page(s))"}}
+                ]
+            },
+            "Date": {"date": {"start": today}},
+            "Area": {"select": {"name": "Delivery"}},
+            "Kind": {"select": {"name": "Machine"}},
+            "Pages": text(", ".join(titles)),
+            "Why": text(
+                "A mermaid block in the repository changed, so the published copy was "
+                "overwritten to match. Written by tools/push_notion_mirror.py, which touches "
+                "diagrams only and never prose."
+            ),
+        },
+    }
+
+    try:
+        request("POST", "/pages", token, body)
+        print("  changelog row added")
+    except SystemExit:
+        print(
+            "  warning: the changelog row could not be written. The push succeeded. "
+            "  Most likely the integration is not shared into the Changelog database."
+        )
+
+
+def push(manifest: dict, token: str, dry_run: bool) -> tuple[list[str], list[str]]:
+    """Bring verbatim mirrors up to date.
+
+    Returns (published, changed). `published` is every verbatim mirror confirmed to match
+    git, which is what may be stamped. `changed` is the subset where a block was actually
+    rewritten, which is what deserves a changelog row: a run that rewrites nothing did not
+    change anything, and saying otherwise makes the log worth less than no log.
+    """
+    published, changed = [], []
     for mirror in manifest["mirrors"]:
         if mirror["kind"] != "verbatim":
             continue
 
         page = mirror["page"]
-        found = mermaid_block_ids(page, token)
+        found = mermaid_blocks(page, token)
         wanted = max(d["page_block"] for d in mirror["diagrams"]) + 1
         if len(found) < wanted:
             die(
@@ -163,23 +220,35 @@ def push(manifest: dict, token: str, dry_run: bool) -> list[str]:
                 "Fix page_block in docs/notion-mirror.json rather than guessing."
             )
 
+        touched = False
         for entry in mirror["diagrams"]:
             body = diagram_source(entry)
             block = found[entry["page_block"]]
             label = f"{mirror['title']} block {entry['page_block']}"
+
+            if block_text(block) == body:
+                if dry_run:
+                    print(f"  unchanged {label}")
+                continue
+
             if dry_run:
                 print(f"  would write {label}  <- {entry['file']} {entry['section']}")
+                touched = True
                 continue
+
             request(
                 "PATCH",
-                f"/blocks/{block}",
+                f"/blocks/{block['id']}",
                 token,
                 {"code": {"language": "mermaid", "rich_text": rich_text(body)}},
             )
             print(f"  wrote {label}")
+            touched = True
 
-        pushed.append(mirror["title"])
-    return pushed
+        published.append(mirror["title"])
+        if touched:
+            changed.append(mirror["title"])
+    return published, changed
 
 
 def stamp(manifest: dict, titles: list[str]) -> int:
@@ -205,6 +274,11 @@ def main() -> int:
         help="record the editorial mirrors as current, without touching Notion",
     )
     ap.add_argument("--dry-run", action="store_true", help="say what would change, change nothing")
+    ap.add_argument(
+        "--no-changelog",
+        action="store_true",
+        help="skip appending a row to the Notion changelog after publishing",
+    )
     ap.add_argument(
         "--verify",
         action="store_true",
@@ -249,12 +323,17 @@ def main() -> int:
             "\n--dry-run needs it too: locating the blocks to write means reading the page."
         )
 
-    pushed = push(manifest, token, args.dry_run)
+    pushed, changed = push(manifest, token, args.dry_run)
     if args.dry_run:
         print("\nDry run, nothing written.")
         return 0
+    if changed and not args.no_changelog:
+        log_change(manifest, token, changed, date.today().isoformat())
+
     n = stamp(manifest, pushed)
-    print(f"\n{len(pushed)} page(s) pushed, {n} manifest entr(ies) updated.")
+    verb = f"{len(changed)} page(s) changed" if changed else "nothing to change"
+    print()
+    print(f"{len(pushed)} page(s) checked, {verb}, {n} manifest entr(ies) updated.")
     print("Commit docs/notion-mirror.json so CI knows Notion is current.")
     return 0
 

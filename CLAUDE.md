@@ -98,6 +98,8 @@ Update it as part of the work, not as a separate chore:
   Infisical. Notion holds the reference only, never a token, connection string, or password.**
 - A sprint starts or ends: new Sprints row with one goal; at close, answer Goal met honestly
   and fill in What we learned. Two-week cadence, one Active sprint at a time.
+- Anything in the workspace changes by hand: add a Changelog row saying what and **why**, with
+  the pull request. Machine rows are written by the mirror pusher and need no help.
 - Weekly: refresh the status page. Four headings, shipped, next, blocked, needs a decision.
 
 **Mirrored documents are machine-checked (ADR 0021).** `docs/notion-mirror.json` registers every
