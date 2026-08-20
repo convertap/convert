@@ -267,8 +267,13 @@ jobs:
         with:
           node-version: '22'
 
+      # Pinned, not `latest`. @railway/cli published 377 versions and seven of
+      # them in four days, so `latest` means two deploys an hour apart can run
+      # different CLIs — and the deploy path has already broken once on this
+      # CLI's auth behaviour (ADR 0026). Dependabot cannot see a global npm
+      # install, so this number is bumped by hand; ADR 0028 says how.
       - name: Install the Railway CLI
-        run: npm install -g @railway/cli
+        run: npm install -g @railway/cli@5.41.2
 
       # `railway up` uploads this checkout, so the artifact is the commit the
       # gates ran against rather than whatever the branch pointer resolves to
@@ -316,8 +321,13 @@ jobs:
         with:
           node-version: '22'
 
+      # Pinned, not `latest`. @railway/cli published 377 versions and seven of
+      # them in four days, so `latest` means two deploys an hour apart can run
+      # different CLIs — and the deploy path has already broken once on this
+      # CLI's auth behaviour (ADR 0026). Dependabot cannot see a global npm
+      # install, so this number is bumped by hand; ADR 0028 says how.
       - name: Install the Railway CLI
-        run: npm install -g @railway/cli
+        run: npm install -g @railway/cli@5.41.2
 
       - name: Deploy ${{ matrix.name }}
         env:
