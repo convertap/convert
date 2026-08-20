@@ -30,7 +30,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -111,7 +111,7 @@ jobs:
           git diff --exit-code -- apps/api/openapi.json \
             || { echo "::error::openapi.json is stale. Run 'pnpm --filter @convert/api openapi:generate' and commit the result."; exit 1; }
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: G6 invariant coverage
