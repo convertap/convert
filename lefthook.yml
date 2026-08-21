@@ -28,6 +28,13 @@ pre-push:
       run: python tools/check_invariant_coverage.py
     contrast:
       run: python tools/check_contrast.py
+    openapi:
+      # G10's first half, locally. The generator boots the api's module graph, so it is the
+      # only local check that proves the graph still constructs - `typecheck` and `test` both
+      # pass without ever building it. Added 21 August 2026 after a green local run pushed a
+      # branch that failed CI here: correcting the runtimes to DATABASE_URL_APP left the
+      # generator seeding the owner's variable, and nothing local noticed.
+      run: pnpm --filter @convert/api openapi:generate && git diff --exit-code -- apps/api/openapi.json
     notion-mirror:
       # G15. No network access, so it is as cheap locally as the others.
       run: python tools/check_notion_mirror.py
