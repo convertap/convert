@@ -3,7 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-08-20
 **Supersedes:** -
-**Superseded by:** -
+**Superseded by:** 0047, in one part only — the refresh token lifetime, now 7 days
 
 ## Context
 

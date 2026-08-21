@@ -103,6 +103,12 @@ When one resolves into something durable:
    A decided item left `Open` is how a project loses track of itself, and it has happened here.
 3. **Update `docs/pre-development-checklist.md`** — the item's status and a §10 decision-log row.
 4. **Add a Changelog row** saying what changed and *why*.
+5. **Commit the work, review it, and open a pull request** — in the same sitting, before the
+   session ends. Decided 2026-08-21, after three resolved tickets (CV-8, CV-9, CV-14) were found
+   sitting uncommitted in one working tree while all three read `Done` on the board. A ticket that
+   is `Done` in Notion and absent from `main` is worse than an open one, because the board is now
+   lying to whoever reads it next. Review means an independent pass over the diff, not a re-read of
+   your own work.
 
 Do not invent product facts to close a ticket. If neither `mvp-scope.md` nor `product-spec.md`
 answers it and no human has decided, the ticket stays open. That is a real blocker, and recording it

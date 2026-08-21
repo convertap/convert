@@ -4,7 +4,7 @@ How the architecture in [`architecture.md`](./architecture.md) stays true once s
 
 Stack is settled: **Next.js web, NestJS on the Fastify adapter, one worker, one Postgres** (ADR 0001, checklist S1).
 
-**Last updated:** 2026-08-20
+**Last updated:** 2026-08-21
 
 ---
 
@@ -86,10 +86,10 @@ Two kinds. A machine gate blocks the merge; a human gate is a checklist line som
 | G4 | Lint passes, no new warnings | machine | merge |
 | G5 | Unit tests pass | machine | merge |
 | G6 | An invariant test exists and passes for every I1–I12 | machine | merge |
-| G7 | Migrations apply to a fresh database, and every tenant table has RLS enabled | machine | merge |
+| G7 | Migrations apply to a fresh database, every tenant table has RLS the application role is subject to, and the column conventions hold | machine | merge |
 | G8 | Integration tests pass against real Postgres | machine | merge |
 | G9 | Performance budget met on the pipeline and contact screens | machine | merge |
-| G10 | OpenAPI spec regenerates with no diff, and no endpoint is undocumented | machine | merge |
+| G10 | OpenAPI spec regenerates with no diff, and no endpoint is undocumented. Both halves real since ADR 0045 | machine | merge |
 | G11 | Review checklist signed | human | merge |
 | G12 | Definition of Done met | human | story closure |
 | G13 | Design token contrast meets WCAG in the shipped theme | machine | merge |
@@ -167,7 +167,7 @@ No agent or tool co-authorship trailers. Commits carry their human author only.
 
 Every failure is defined once in `packages/contracts/src/errors.ts` with its HTTP status, retryability, whether it is our fault, and **the sentence a person reads**. Domain and use-case failures are typed and carry a code; one exception filter in `api` maps them to the envelope and logs them, layers below throw without logging. Never render `message` to a user; pick copy by code. No silent catch: catch to add context or convert, then rethrow. Nothing internal reaches a client, and every response carries a `requestId`.
 
-**API documentation.** OpenAPI from day one, generated from the code with `@nestjs/swagger` and committed to the repository as `apps/api/openapi.json`. See §6.1.
+**API documentation.** OpenAPI from day one, generated from the code and committed to the repository as `apps/api/openapi.json`. The Zod schema in `contracts` is the single source; the Nest DTO class is a derived adapter in `apps/api` (ADR 0045). See §6.1.
 
 **Files.** One exported concept per file. Directory per bounded context, not per technical kind, `core/src/crm/lead.ts`, not `core/src/entities/`, `core/src/services/`.
 
@@ -175,10 +175,14 @@ Every failure is defined once in `packages/contracts/src/errors.ts` with its HTT
 
 Swagger is not a launch task. It ships with endpoint number one (ADR 0015).
 
-- **Generated from the code**, via `@nestjs/swagger`. Decorators on every controller and DTO, no hand-written spec to fall out of date.
+- **Generated from the code**, via `@nestjs/swagger` reading DTO classes that `nestjs-zod` derives from the Zod schemas in `contracts` (ADR 0045). There is no hand-written spec, and no shape declared twice.
+- **The schema is the source, the class is the adapter.** `<thing>Schema` in `packages/contracts` becomes `<Thing>Dto` in `apps/api`, `class ThingDto extends createZodDto(thingSchema) {}`, with an empty body. A DTO that adds a field means the schema is wrong. `.boundaries.json` forbids `nestjs-zod` and `@nestjs/swagger` in `contracts`, so a DTO class cannot drift into the browser bundle.
+- **Two traps a machine will not catch.** `cleanupOpenApiDoc` must wrap the document or the spec generates, looks plausible, and is subtly wrong. And responses take `@ZodResponse`, not `@ApiOkResponse` — the latter documents the *input* shape of a transforming schema. Both are lines on the review checklist.
+- **Requests are validated at the boundary.** `ZodValidationPipe` is global, and `ErrorFilter` maps a Zod failure to `details: FieldError[]` on the envelope, so `validation_failed` names the offending fields rather than promising to (ADR 0018, ADR 0045).
 - **Committed** as `apps/api/openapi.json`. This is the point: an API change becomes a reviewable diff. A breaking change to a response shape shows up in the pull request instead of in a consumer's logs.
-- **Gate G10** regenerates the spec in CI and fails on any diff, so the committed file cannot go stale. It also fails on an endpoint with no summary, no response type, or an untyped body.
-- **Every DTO carries an example.** A spec with types but no examples is half a document.
+- **Gate G10 has two halves, and both run.** The first regenerates the spec and fails on any diff, so the committed file cannot go stale. The second, `tools/check_openapi_complete.py`, fails an operation with no summary, no `operationId`, no tag, no typed 2xx response, or an untyped request body. That second half was documented here from 18 August and did not exist until ADR 0045 built it — the sort of claim that is worth checking rather than believing.
+- **What G10 still does not check**, stated rather than glossed: that every operation documents a failure response against the error envelope, and that every schema property carries an example. Both are ADR 0015 requirements. The first becomes enforceable once the envelope is a Zod-derived DTO every controller declares; the second would fail today on array properties whose example sits on the item.
+- **Every DTO carries an example**, as `.meta({ example })` on the schema in `contracts` rather than an `@ApiProperty` override, so `web` can read the same example for a placeholder. A spec with types but no examples is half a document.
 - **Error responses are documented**, not just the happy path. The envelope from §6 is a shared schema referenced by every endpoint.
 - **UI exposure:** Swagger UI is always on in local and staging. In production it stays behind authentication until the Pro-tier public API launches, an open `/docs` on a production API is free reconnaissance for an attacker.
 
