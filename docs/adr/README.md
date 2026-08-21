@@ -9,7 +9,7 @@ One file per decision. Numbered, immutable once accepted, superseded rather than
 | [0001](./0001-nextjs-web-nestjs-on-fastify-api-and-a-worker-in-one-monorep.md) | Next.js web, NestJS on Fastify API, and a worker in one monorepo | Accepted |
 | [0002](./0002-postgresql-row-level-security-as-the-tenancy-boundary.md) | PostgreSQL row-level security as the tenancy boundary | Proposed |
 | [0003](./0003-principal-abstraction-covering-sessions-api-clients-and-the.md) | Principal abstraction covering sessions, API clients, and the worker | Proposed |
-| [0004](./0004-ulid-external-identifiers.md) | ULID external identifiers | Proposed |
+| [0004](./0004-ulid-external-identifiers.md) | ULID external identifiers | Superseded by 0043 |
 | [0005](./0005-provider-agnostic-messaging-ports.md) | Provider-agnostic messaging ports | Proposed |
 | [0006](./0006-unified-bidirectional-message-record-with-forward-only-statu.md) | Unified bidirectional message record with forward-only status | Proposed |
 | [0007](./0007-derived-conversation-window-state-surfaced-in-the-ui.md) | Derived conversation-window state, surfaced in the UI | Proposed |
@@ -44,6 +44,7 @@ One file per decision. Numbered, immutable once accepted, superseded rather than
 | [0040](./0040-consent-operating-rules.md) | How consent is captured, blocked on, and withdrawn | Accepted |
 | [0041](./0041-decision-records-are-not-rewritten-when-vocabulary-changes.md) | Decision records are not rewritten when vocabulary changes | Accepted |
 | [0042](./0042-two-database-roles-so-rls-is-not-advisory.md) | Two database roles, so row-level security is not advisory | Accepted |
+| [0043](./0043-the-ulid-is-the-primary-key.md) | The ULID is the primary key | Accepted |
 
 Statuses: **Proposed** (written, not yet ratified) · **Accepted** (in force) · **Superseded** (replaced, kept for the record) · **Rejected** (considered and declined, kept so it is not re-litigated).
 
