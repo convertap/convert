@@ -4,7 +4,7 @@ Target architecture for the MVP defined in [`mvp-scope.md`](./mvp-scope.md), des
 
 Written stack-agnostic and still largely stack-independent: the layering, invariants, and messaging design hold regardless of runtime. The stack itself is now decided, §3, ADR 0001.
 
-**Last updated:** 2026-08-18
+**Last updated:** 2026-08-21
 
 **Status:** Proposal. Sections marked **[DECIDE]** carry a checklist ID and need product-owner sign-off before implementation.
 
@@ -47,7 +47,7 @@ TypeScript throughout, one pnpm monorepo, three runtimes, one datastore.
 | API | **NestJS on the Fastify adapter**. HTTP interface, webhook ingress, later the Pro-tier public API |
 | Worker | **NestJS standalone application context**, sharing modules with the API |
 | Domain | `packages/core` and `packages/application`, framework-free, shared by API and worker |
-| Datastore | **PostgreSQL 16**, with row-level security as the tenancy boundary |
+| Datastore | **PostgreSQL 16**, with row-level security as the tenancy boundary. CI and local development both run 16; the managed server on Railway has not been checked against it, and a major-version gap would put ADR 0042's policy expression and ADR 0044's enum ordering on an unproven version |
 | Query layer | **Drizzle ORM** + Drizzle Kit migrations, in `packages/infra` only (ADR 0017) |
 | Jobs | Postgres-backed queue (ADR 0010), no second stateful service |
 | API docs | OpenAPI generated from code and committed (ADR 0015) |
@@ -260,8 +260,33 @@ they take numbers when the entities land:
 | A `deal` and its invoice line carry snapshotted product name, unit price and tax components | 0033 |
 | A `media_asset` cannot be hard-deleted while referenced | 0033 |
 | Invoice payment status is **derived** from payment rows, never a settable flag | 0034 |
+| A `session` belongs to a user and never to a workspace: it carries no `workspace_id` and no role | 0047 |
+| A refresh token is single-use. Presenting a superseded generation revokes the whole family, not the presented token | 0047 |
+| `verification_attempt` never stores the code itself | 0029, 0047 |
 | A provider payment callback is idempotent on its provider reference | 0034 |
 | Every cross-tenant read by a platform admin produces an `audit_event` row | 0035 |
+
+### Column conventions (ADR 0046)
+
+The decisions that repeat on every table, settled once so no table invents its own. Inconsistency
+here is not one bug, it is one per table for the life of the schema.
+
+| Concern | Convention | Why |
+|---------|-----------|-----|
+| Money | `bigint` pesewas, column named `*_pesewas`, Drizzle `mode: 'bigint'` | I8. `mode: 'number'` truncates silently past 2⁵³ rather than raising |
+| Currency | No column. `CURRENCY = 'GHS'` in `contracts` | I8 fixes it. A column set on every insert and ignored on every read implies a capability nothing implements |
+| Rates | Integer basis points, column named `*_bp`. VAT is `1500` | Exact, integral end to end. Retires ADR 0034's "pesewas or basis points" |
+| Tax arithmetic | `amount * bp / 10000`, half-up, per component per line | Components stay itemised on the line (CV-11), so the rounded figure is the printed one |
+| Banned types | No `numeric`, `decimal`, `money`, `real`, `double precision`, anywhere | Stronger than a naming rule: it does not rely on a column being named honestly |
+| Timestamps | `timestamptz` always. No `date` columns — a due point is an instant | I11. Plain `timestamp` stores a number meaningless without knowing who wrote it |
+| `created_at` | Every table, not null | Redundant with the ULID's own timestamp, and worth it: only application code can read that out of a `uuid` |
+| `updated_at` | Present **if and only if** the table accepts `UPDATE`, written by a trigger | On an insert-only table (I6) it can never change, and a reader would trust it. A trigger because migrations and psql bypass an application hook |
+| Soft delete | `deleted_at` on `media_asset` only. A second table needs an ADR | Every soft-deleted table adds a mandatory predicate; the query that forgets it leaks rather than errors |
+| Deactivation | `deactivated_at`, deliberately not `deleted_at` | Reversible, rule-bearing (I7), still in history. Two things, two words |
+
+Enforced by `pnpm --filter @convert/infra assert:conventions` in the G7 job. It reads the catalogue,
+so it checks the schema that exists rather than the one that was described — and it reports plainly
+that an empty schema proves nothing.
 
 ---
 
@@ -467,7 +492,7 @@ The pilot's real purpose is learning. If activation (10 contacts + 1 deal in 7 d
 - **Secrets** in a managed secret store, never in the repository. Provider credentials are per-environment.
 - **API keys** hashed at rest, shown once, prefixed so leaked keys are detectable in scans.
 - **PII discipline**. Customer phone numbers are third-party data under L1–L4. Encrypt at rest, redact in logs, and support per-workspace export and deletion from the start (C7). Retrofitting deletion across an append-only log is genuinely hard; design the boundary now.
-- **Sessions**. Long-lived on mobile to avoid re-auth cost (relevant if A1 lands on phone+OTP, where every login costs an SMS), with server-side revocation on member deactivation.
+- **Sessions**. A stored, revocable `session` row per live refresh token, 7 days absolute, rotated on every use with replay detection (ADR 0047). Long-lived because every login costs a message (ADR 0029), shortened from 30 days because possession of the handset is the whole credential. A session is **identity-only**: deactivating a member revokes their access to that workspace through the per-request membership read, and does *not* end sessions they hold in other workspaces.
 
 ---
 
@@ -532,7 +557,7 @@ Blocking. Each maps to a checklist item; none can be resolved unilaterally by en
 | Ref | Assumption made here | Needs |
 |-----|---------------------|-------|
 | ~~S1~~ | ~~Stack~~ | **Decided**, Next.js + NestJS/Fastify + worker on Postgres (ADR 0001) |
-| A1 | Long-lived mobile sessions, held by the web BFF (ADR 0013) | Login method |
+| ~~A1~~ | ~~Long-lived mobile sessions, held by the web BFF (ADR 0013)~~ | **Decided**, one-time code over a `VerificationPort` (ADR 0029); sessions stored, revocable and identity-only, 7-day refresh (ADR 0047) |
 | A6 | Principal abstraction from day one | Sign-off |
 | R1 | `phone_e164` unique per workspace, merge prompt on collision | **Decided 2026-08-21, ADR 0030** |
 | R2/R8 | Lead and Deal as separate state machines; explicit conversion | Sign-off |

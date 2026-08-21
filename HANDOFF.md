@@ -237,10 +237,12 @@ stay unproven until one has been restored, which the Definition of Done requires
 **E7 is half done and still marked ☐.** Repo, CI and hosting exist. **A domain and error tracking
 do not** — nothing in the repository configures either.
 
-**The checklist's own decision log is empty.** `docs/pre-development-checklist.md` §10 has zero
-rows against 26 ADRs, twelve of them Accepted. Worse, several rows are stale: S2 has ADR 0012 and
-a live `lighthouserc.json` enforcing it, S3 has ADR 0010, and S6 now has two working environments,
-yet all three still read ☐. Anyone reading the checklist alone will misjudge where the project is.
+**~~The checklist's own decision log is empty.~~ Fixed 21 August 2026.** §10 now carries the
+decision rows, and S2, S3 and S6 read ☑ with the record that settled each. S3 was the instructive
+one: it looked half decided because ADR 0010 settles the queue and says nothing about a scheduler
+— the scheduler is in **ADR 0022**, decided while choosing the hosting rather than while choosing
+the queue. An item whose answer is split across two records reads as open forever unless both are
+cited. The Decisions database in Notion was reconciled in the same sitting.
 
 ---
 

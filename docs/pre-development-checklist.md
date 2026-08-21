@@ -4,7 +4,7 @@ What must be settled before Phase 4 implementation starts. Two of these buckets 
 
 Scope authority remains [`mvp-scope.md`](./mvp-scope.md). This document does not change scope; it lists what has to be decided, obtained, or proven first.
 
-**Last updated:** 2026-08-20
+**Last updated:** 2026-08-21
 
 ## Status legend
 
@@ -132,10 +132,10 @@ R3 is not a permissions feature. It decides whether every query is owner-scoped 
 
 | ID | Decision | Notes | Status |
 |----|----------|-------|--------|
-| A1 | Login method | **Decided 2026-08-20:** identity accepts email *or* phone (at least one, each unique); passwordless, the credential is always a one-time code; delivered through a `VerificationPort` with Fabric behind it, over email or SMS (WhatsApp once E4 approves an authentication template). 15-minute access token, 30-day rotating refresh. ADR 0029 | ☑ |
+| A1 | Login method | **Decided 2026-08-20:** identity accepts email *or* phone (at least one, each unique); passwordless, the credential is always a one-time code; delivered through a `VerificationPort` with Fabric behind it, over email or SMS (WhatsApp once E4 approves an authentication template). 15-minute access token in front of a stored, revocable, identity-only session; refresh rotates on every use and expires 7 days after creation. ADR 0029, ADR 0047 | ☑ |
 | A2 | Does a user belong to one workspace, or many? | **Decided 2026-08-21:** A user belongs to **many** workspaces. ADR 0030 | ☑ |
 | A3 | Invite acceptance channel | A1 settled the identifier: an invite is addressed to whichever identifier the owner enters, and accepted by the same one-time code flow. Remaining question is only the wording and expiry of an invite | ◐ |
-| A4 | Tenancy model | **Decided 2026-08-21:** Workspace is the tenant; `workspace` renamed to `workspace`; contacts copied, never shared. ADR 0030 | ☑ |
+| A4 | Tenancy model | **Decided 2026-08-21:** Workspace is the tenant; `organization` renamed to `workspace`; contacts copied, never shared. ADR 0030 | ☑ |
 | A5 | Entitlement boundary | **Decided 2026-08-21:** Subscription per workspace; split fee platform default with per-workspace override, snapshotted per transaction. ADR 0034 | ☑ |
 | A6 | Principal model | **Decided 2026-08-21:** Principal model confirmed, plus a fourth `PlatformAdminPrincipal` with audited, non-ambient cross-tenant access. ADR 0035 | ☑ |
 
@@ -146,12 +146,12 @@ R3 is not a permissions feature. It decides whether every query is owner-scoped 
 | ID | Item | Notes | Status |
 |----|------|-------|--------|
 | S1 | Stack selection | **Decided 2026-08-18:** Next.js web, NestJS on the Fastify adapter, one worker, one PostgreSQL, pnpm monorepo. ADR 0001. Hard constraint: web, api, and database in the same region, see `architecture.md` §3 | ☑ |
-| S7 | OpenAPI from the first endpoint | **Decided 2026-08-18:** generated with `@nestjs/swagger`, committed as `apps/api/openapi.json`, drift fails CI gate G10. ADR 0015 | ☑ |
-| S2 | Mobile performance budget as a number | JS bundle ceiling and LCP target on throttled 4G, enforced in CI. Mobile-first is the entire differentiation claim (deck slide 7) | ☐ |
-| S3 | Background jobs and scheduler | Required in Phase 1, not later: campaign sends, follow-up reminders, delivery webhooks | ☐ |
+| S7 | OpenAPI from the first endpoint | **Decided 2026-08-18:** generated with `@nestjs/swagger`, committed as `apps/api/openapi.json`, drift fails CI gate G10. ADR 0015. **Source settled 2026-08-21:** the Zod schema in `contracts` is the single source and `nestjs-zod` derives the Nest DTO in `apps/api`. ADR 0045. Built so far: G10's completeness half and the `.boundaries.json` rule keeping Nest out of `contracts`. **Not built: the dependency itself, the DTO classes, the validation pipe and the cursor change** — the decision is made, the wiring is a separate commit | ☑ |
+| S2 | Mobile performance budget as a number | **Decided 2026-08-18 (ADR 0012):** five numbers in `architecture.md` §18 — ≤ 150 KB gzipped initial JS on the pipeline screen, ≤ 2.5 s LCP, ≤ 200 ms INP, ≤ 300 ms p75 server response on list views, ≤ 500 KB first visit. Enforced as G9 via `lighthouserc.json`. **G9 is vacuous until `apps/web` is real** | ☑ |
+| S3 | Background jobs and scheduler | **Decided across two records.** Queue 2026-08-18 (ADR 0010): Postgres-backed, no second stateful service; BullMQ on Redis rejected. Scheduler 2026-08-19 (ADR 0022): the worker is a Railway **cron service on a five-minute schedule**, draining a bounded batch and exiting, because Railway skips a run while the previous one is still going. Sweeps stay idempotent per (task, due-window) and timezone-sensitive (I11) | ☑ |
 | S4 | Public webhook endpoint design | Signature-verified, idempotent, replay-safe. Providers retry; duplicates will arrive | ☐ |
 | S5 | Event instrumentation | Activation is "10+ contacts and 1+ deal within 7 days" (`mvp-scope.md` §26). Unmeasurable if analytics is bolted on afterward | ☐ |
-| S6 | Environments | Local, staging, production; seed data for demos | ☐ |
+| S6 | Environments | **Decided 2026-08-19 (ADR 0022):** staging live on Railway in Amsterdam, api and web always-on beside a managed Postgres, one region, private network, config-as-code in `apps/*/railway.json`. **The server major version is unconfirmed and is not 16.** This row previously said 18, which ADR 0022 does not state and nothing in the repository corroborates: CI, `docker-compose.yml` and `architecture.md` §3 are all Postgres 16. If staging really is 18 then every behaviour proven against 16 — the RLS policy expression of ADR 0042 and the enum ordering of ADR 0044 — is proven on a different major version than the one it runs on, which is worth an hour to settle. Read it off the Railway service and correct this row either way. Worker deliberately not deployed until it has a handler and a drain-and-exit entrypoint. Point-in-time recovery available but off, and backups stay unproven until one is restored | ☑ |
 
 ---
 
@@ -277,6 +277,11 @@ Fill in as decisions land. Record the decision, not the discussion.
 | 2026-08-21 | S8, S9 | Cloudflare R2 for media; envelope-encrypted per-workspace credentials with the master key outside Postgres. ADR 0038 | Engineering |
 | 2026-08-21 | E9, E8 | Hubtel for payments. Invoicing in two stages: serve non-VAT-registered businesses now, pursue GRA certification as a funded workstream. ADR 0039 | Product owner |
 | 2026-08-21 | L3 | Consent operating rules: an inbound message is not marketing consent, imports create none, the wording shown is stored, withdrawal has three entry points and one record. Legal text still outstanding. ADR 0040 | Product owner |
+| 2026-08-21 | S7 | Zod schemas in `contracts` are the single source for OpenAPI; `nestjs-zod` derives the DTO class in `apps/api`; requests validated globally and field errors reach the envelope; cursor is the ULID; G10's completeness half built. ADR 0045 | Engineering |
+| 2026-08-18 | S2 | Mobile performance budget is five numbers in `architecture.md` §18, enforced as G9 through `lighthouserc.json`. ADR 0012. *Logged 21 August; the decision predates the row* | Engineering |
+| 2026-08-19 | S3 | Job queue is Postgres-backed (ADR 0010); the worker is a Railway cron service on a five-minute schedule that drains a bounded batch and exits (ADR 0022). Always-on worker and folding it into the api both rejected. *Logged 21 August* | Engineering |
+| 2026-08-19 | S6 | Staging on Railway in Amsterdam, one region with a managed Postgres, config-as-code. Worker not deployed until it has a handler. ADR 0022. *Logged 21 August; the "Postgres 18" this row first carried is unsourced — see the S6 row above* | Engineering |
+| 2026-08-21 | A1 | Refresh tokens are stored: one revocable `session` row per family, identity-only, generation-numbered so replay revokes the family. Rate limits are a Postgres table, not memory. **Lifetime shortened from 30 days to 7**, at roughly 4.3× the verification spend ADR 0029 budgeted. ADR 0047 | Product owner |
 
 **New blocking items created by the 21 August session**, none of which existed before it:
 
@@ -287,6 +292,12 @@ Fill in as decisions land. Record the decision, not the discussion.
 | S8 | Object storage provider and region for the media library, matching the same-region constraint, with upload limits and resized derivatives | **Decided 2026-08-21:** **Cloudflare R2**, S3-compatible, zero egress, global edge. Images bypass the render path so they are not pinned to the deploy region. Derivatives at upload; only the primary loads in list views. ADR 0038 | ☑ |
 | S9 | Encrypted per-workspace merchant-credential storage with its own key management. Infisical is the wrong tool for tenant-owned keys (ADR 0020) | **Decided 2026-08-21:** **Envelope encryption**: per-workspace AES-256-GCM data key wrapped by a master key in Infisical, never in Postgres. Write-only, never logged, never returned. ADR 0038 | ☑ |
 
-Rows for S2, S3 and S6 are outstanding: each has a decision recorded in an ADR or enforced in CI
-without ever reaching this table, which is why their status columns above are still wrong. That is
-tracked in `HANDOFF.md` §4.
+**That backlog is cleared, 21 August 2026.** S2, S3 and S6 each had a decision recorded in an ADR or
+running in CI that never reached this table, and their status columns said the opposite. All three
+are now logged above and closed in the Decisions database in the same sitting.
+
+S3 is the one worth a note. Read against ADR 0010 alone it looks half decided — 0010 settles the
+queue substrate and names no scheduler. The scheduler is in **ADR 0022**, which specifies the worker
+as a Railway cron service, because the decision arrived as part of choosing the hosting rather than
+as part of choosing the queue. A checklist ID whose answer is split across two records is exactly
+the kind of item that reads as open forever, and the fix is to cite both.

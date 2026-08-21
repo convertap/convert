@@ -12,6 +12,7 @@
     "bootstrap": "tsx scripts/bootstrap.ts",
     "migrate": "tsx scripts/migrate.ts",
     "assert:rls": "tsx scripts/assert-rls.ts",
+    "assert:conventions": "tsx scripts/assert-conventions.ts",
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
