@@ -43,6 +43,23 @@ export default defineConfig({
           },
         },
         test: {
+          name: 'apps',
+          globals: true,
+          // Without this project a spec beside a composition root is collected by
+          // nothing and passes by not existing.
+          include: ['apps/*/src/**/*.spec.ts'],
+        },
+      },
+      {
+        resolve: {
+          alias: {
+            '@convert/contracts': src('contracts'),
+            '@convert/core': src('core'),
+            '@convert/application': src('application'),
+            '@convert/infra': src('infra'),
+          },
+        },
+        test: {
           name: 'invariants',
           globals: true,
           include: ['tests/invariants/**/*.spec.ts'],

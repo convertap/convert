@@ -74,5 +74,13 @@ Migrations now need the owner credential in production, so a deploy carries two 
 ## Enforcement
 
 - **G7**, extended and ungated: `assert:rls` fails if the application role is superuser or `BYPASSRLS`, if a declared tenant table is owned by it without FORCE, or if `DATABASE_URL_APP` is absent.
+- **Both composition roots read `DATABASE_URL_APP` and refuse to boot without it**, with no
+  fallback to `DATABASE_URL`, and a unit test per runtime holds that shut. Added 21 August 2026
+  after review found `apps/api` and `apps/worker` both reading the owner's credential — this
+  record's central rule, contradicted in the only two places it applies, from the day the record
+  was accepted. The test that matters is the third one: it sets `DATABASE_URL` alone and requires
+  a throw, because a fallback there would boot cleanly, answer every query, and leave tenant
+  isolation off while G7 still passed. Verified by reintroducing the fallback and watching it
+  fail.
 - **`bootstrap.ts` asserts the attributes it just created** rather than trusting the SQL ran as written. A role created with the wrong attributes is worse than no role, because everything downstream looks correct.
 - The outstanding human step — repointing Railway's `DATABASE_URL` and adding `DATABASE_URL_APP` in both environments — is recorded on the *Provision an application role that RLS actually applies to* ticket and in `HANDOFF.md` §4. It is not done, and nothing here pretends otherwise.

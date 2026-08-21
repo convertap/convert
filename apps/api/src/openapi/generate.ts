@@ -11,7 +11,12 @@ import { buildOpenApiDocument } from './document';
  * surprise for the web app or, later, a paying integrator.
  */
 const main = async () => {
-  process.env.DATABASE_URL ??= 'postgres://unused:unused@localhost:5432/unused';
+  // Building the module graph runs InfraModule's factory, which demands the application
+  // role's connection string (ADR 0042). Nothing connects here - the document is built
+  // from decorators - so a placeholder is enough, and it has to be DATABASE_URL_APP
+  // rather than DATABASE_URL or the graph refuses to construct. Seeding the owner's
+  // variable instead is what broke CI on 21 August when the runtimes were corrected.
+  process.env.DATABASE_URL_APP ??= 'postgres://unused:unused@localhost:5432/unused';
 
   const app = await NestFactory.create(AppModule, new FastifyAdapter(), { logger: false });
   await app.init();

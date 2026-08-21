@@ -10,9 +10,12 @@ reconstruct from the repository: what is half-finished, what is unproven, and wh
 
 ## 1. What the project is blocked on
 
-**Not code. Decisions.** Eleven decisions block writing feature code, and six of those are
-product rules owned by the product owner (R1, R2, R3, R8, A1, E6). No amount of engineering
-moves them. `packages/infra/src/db/schema.ts` holds `workspace` and nothing else, and
+**Not code. Decisions — but far fewer than this section used to claim.** It said eleven blocked
+feature code, six of them product rules (R1, R2, R3, R8, A1, E6). **All six are decided**: R1–R9
+and A1–A6 landed on 21 August 2026 as ADR 0029 to ADR 0040, and E6 as ADR 0037. What remains is
+not the same list, and conflating the two sends the next reader looking for settled work: the live
+blockers are **E2 and E8**, the legal text of **L2 and L3**, and turning the settled rules into
+tables. The first of those is engineering work with no decision left in it. `packages/infra/src/db/schema.ts` holds `workspace` and nothing else, and
 `TENANT_TABLES` is an empty array, deliberately: R1 to R3 and R8 decide the shape of contact,
 lead and deal, and guessing them means building the schema twice.
 
