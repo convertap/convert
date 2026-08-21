@@ -37,6 +37,10 @@ One file per decision. Numbered, immutable once accepted, superseded rather than
 | [0033](./0033-commerce-products-invoices-and-tax.md) | Products, invoices and tax enter the MVP, and what that costs | Accepted |
 | [0034](./0034-payments-collect-to-the-smes-own-account.md) | Payments settle to the SME's own mobile money account | Accepted |
 | [0035](./0035-platform-admin-crosses-tenancy-only-by-audited-action.md) | A platform admin crosses tenancy only by an audited action | Accepted |
+| [0036](./0036-whatsapp-direct-to-meta-fabric-for-sms-and-codes.md) | WhatsApp goes direct to Meta; Fabric carries SMS and sign-in codes | Accepted |
+| [0037](./0037-facebook-and-instagram-lead-ads-are-in-scope.md) | Facebook and Instagram lead ads are in scope | Accepted |
+| [0038](./0038-cloudflare-r2-for-media-and-envelope-encrypted-credentials.md) | Cloudflare R2 for media, and envelope encryption for tenant credentials | Accepted |
+| [0039](./0039-hubtel-for-payments-and-a-two-stage-invoice-compliance-path.md) | Hubtel for payments, and a two-stage path to lawful invoicing | Accepted |
 
 Statuses: **Proposed** (written, not yet ratified) · **Accepted** (in force) · **Superseded** (replaced, kept for the record) · **Rejected** (considered and declined, kept so it is not re-litigated).
 

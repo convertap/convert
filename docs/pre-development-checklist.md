@@ -26,13 +26,13 @@ The demo path is separate from the production path. The product can be demonstra
 
 | ID | Item | Flags | Owner | Status |
 |----|------|-------|-------|--------|
-| E0 | Demo WhatsApp provider selected and configured: Meta test account, BSP sandbox, or temporary third-party production-ready account | ⛔ | | ☐ |
+| E0 | Demo WhatsApp provider. **Decided 2026-08-21:** the demo splits — WhatsApp inbound is proven against **Meta test credentials**, because that is the production path and a spike should exercise the path it proves. Fabric's own test environment covers SMS and sign-in codes, free to us. ADR 0036 | ⛔ | | ☑ |
 | E1 | Meta Business verification for the Ghana entity | ⏱ | | ☐ |
 | E2 | Production WhatsApp Business Account + dedicated phone number | ⛔ ⏱ | | ☐ |
-| E3 | Decide production provider path: Meta Cloud API direct, third-party BSP, or internal production adapter | ⛔ | | ☐ |
+| E3 | Production provider path. **Decided 2026-08-21: Meta Cloud API direct** for WhatsApp; Fabric keeps SMS and sign-in codes. One Meta app and one verification serve both WhatsApp and lead ads. Consequence: E1, E2 and E4 are Convert's to wait out and do not move to Fabric. Benefit: login depends on no Meta approval. ADR 0036 | ⛔ | | ☑ |
 | E4 | Display-name approval, then first message templates approved | ⏱ | | ☐ |
 | E5 | SMS aggregator selected; sender ID registered | ⏱ | | ☐ |
-| E6 | Meta Lead Ads: in or out of MVP (if in, app review for the leadgen webhook) | ⛔ ⏱ | | ☐ |
+| E6 | Meta Lead Ads. **Decided 2026-08-21: in**, against the engineering recommendation. Meta app review for `leads_retrieval` starts alongside E1 and shares its verification. Assume a rejected first submission. ADR 0037 | ⛔ ⏱ | | ☑ |
 | E7 | Infrastructure accounts: domain, hosting, repo, CI, error tracking | | | ☐ |
 
 ### E0. Demo WhatsApp access
@@ -266,15 +266,19 @@ Fill in as decisions land. Record the decision, not the discussion.
 | 2026-08-21 | scope | Commerce enters the MVP: products, media library, invoices, composable tax. `product-spec.md` §13 amendment A. ADR 0033 | Product owner |
 | 2026-08-21 | A5 | Payment collection into the SME's own MoMo account, optional per workspace; Convert never holds funds; manual recording is the baseline. ADR 0034 | Product owner |
 | 2026-08-21 | A6 | `PlatformAdminPrincipal` crosses tenancy only by an audited action; `apps/admin` deferred. ADR 0035 | Product owner |
+| 2026-08-21 | E0, E3 | WhatsApp direct to Meta Cloud API; Fabric carries SMS and sign-in codes, so login depends on no Meta approval. ADR 0036 | Product owner |
+| 2026-08-21 | E6 | Facebook and Instagram lead ads are in scope, against the engineering recommendation, with Meta app review named as the cost. ADR 0037 | Product owner |
+| 2026-08-21 | S8, S9 | Cloudflare R2 for media; envelope-encrypted per-workspace credentials with the master key outside Postgres. ADR 0038 | Engineering |
+| 2026-08-21 | E9, E8 | Hubtel for payments. Invoicing in two stages: serve non-VAT-registered businesses now, pursue GRA certification as a funded workstream. ADR 0039 | Product owner |
 
 **New blocking items created by the 21 August session**, none of which existed before it:
 
 | ID | Item | Flags | Status |
 |----|------|-------|--------|
-| E8 | GRA Certified Invoicing System certification, before any VAT-labelled document ships. E-VAT has been mandatory since January 2026, and issuing without pre-issue clearance carries criminal penalties for the SME | ⛔ ⏱ | ☐ |
-| E9 | Payment provider chosen — Hubtel versus MTN direct — on Ghana MoMo coverage, settlement timing, fees, KYC burden. Not blocking, since manual payment recording is the baseline | | ☐ |
-| S8 | Object storage provider and region for the media library, matching the same-region constraint, with upload limits and resized derivatives | ⛔ | ☐ |
-| S9 | Encrypted per-workspace merchant-credential storage with its own key management. Infisical is the wrong tool for tenant-owned keys (ADR 0020) | ⛔ | ☐ |
+| E8 | GRA Certified Invoicing System certification. **Approach decided 2026-08-21 (ADR 0039):** stage one serves businesses that are not VAT-registered; stage two pursues certification through Joint UAT with the GRA, about four weeks against the VSDC API. Still blocks any VAT-labelled document. E-VAT has been mandatory since January 2026, and issuing without pre-issue clearance carries criminal penalties for the SME | ⛔ ⏱ | ☐ |
+| E9 | Payment provider. **Decided 2026-08-21: Hubtel** — all three MoMo networks, and it settles to a wallet rather than only a bank, which is what keeps unbanked SMEs in. The fee comparison against MTN direct was **not** completed and remains outstanding. ADR 0039 | | ◐ |
+| S8 | Object storage provider and region for the media library, matching the same-region constraint, with upload limits and resized derivatives | **Decided 2026-08-21:** **Cloudflare R2**, S3-compatible, zero egress, global edge. Images bypass the render path so they are not pinned to the deploy region. Derivatives at upload; only the primary loads in list views. ADR 0038 | ☑ |
+| S9 | Encrypted per-workspace merchant-credential storage with its own key management. Infisical is the wrong tool for tenant-owned keys (ADR 0020) | **Decided 2026-08-21:** **Envelope encryption**: per-workspace AES-256-GCM data key wrapped by a master key in Infisical, never in Postgres. Write-only, never logged, never returned. ADR 0038 | ☑ |
 
 Rows for S2, S3 and S6 are outstanding: each has a decision recorded in an ADR or enforced in CI
 without ever reaching this table, which is why their status columns above are still wrong. That is

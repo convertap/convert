@@ -101,6 +101,22 @@ Update it as part of the work, not as a separate chore:
 - Anything in the workspace changes by hand: add a Changelog row saying what and **why**, with
   the pull request. Machine rows are written by the mirror pusher and need no help.
 - Weekly: refresh the status page. Four headings, shipped, next, blocked, needs a decision.
+- **Weekly: reconcile git and Notion, deliberately.** Decided 2026-08-21, after a session where both
+  drifted in one sitting. Two commands and one judgement:
+
+```bash
+python tools/check_notion_mirror.py                                      # has a git source moved?
+infisical run --env=dev -- python tools/push_notion_mirror.py --verify   # has someone edited Notion?
+```
+
+  `--verify` is the only check that sees an edit made *in* Notion; G15 cannot. Then read the
+  Decisions database and ask one question: **is anything marked Open that has already been decided
+  in an ADR?** That is the drift that matters, because a stale Open row sends the next person to
+  chase settled work. It has already happened once.
+
+  Keep the reconciliation cheap by not creating work for it: **mirror what stakeholders read and
+  link the rest.** Duplicating narrative prose into both places is what makes reconciliation
+  expensive, and it is avoidable — a Notion page that summarises and links to `docs/` never drifts.
 
 **Mirrored documents are machine-checked (ADR 0021).** `docs/notion-mirror.json` registers every
 Notion page derived from these docs, and gate G15 fails the build when a mirrored source moves
