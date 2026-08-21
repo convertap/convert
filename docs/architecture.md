@@ -47,7 +47,7 @@ TypeScript throughout, one pnpm monorepo, three runtimes, one datastore.
 | API | **NestJS on the Fastify adapter**. HTTP interface, webhook ingress, later the Pro-tier public API |
 | Worker | **NestJS standalone application context**, sharing modules with the API |
 | Domain | `packages/core` and `packages/application`, framework-free, shared by API and worker |
-| Datastore | **PostgreSQL 16**, with row-level security as the tenancy boundary. CI and local development both run 16; the managed server on Railway has not been checked against it, and a major-version gap would put ADR 0042's policy expression and ADR 0044's enum ordering on an unproven version |
+| Datastore | **PostgreSQL 16** in CI and local development; **Postgres 18 on Railway**, in both deployed environments, confirmed 21 August 2026. Row-level security is the tenancy boundary either way, but the two-major gap means ADR 0042's policy expression and ADR 0044's enum ordering are proven on a version nothing runs. Closing the gap is a live decision |
 | Query layer | **Drizzle ORM** + Drizzle Kit migrations, in `packages/infra` only (ADR 0017) |
 | Jobs | Postgres-backed queue (ADR 0010), no second stateful service |
 | API docs | OpenAPI generated from code and committed (ADR 0015) |
