@@ -271,6 +271,21 @@ Three layers, each catching what the one above misses.
 
 **1. Database: Postgres row-level security.** Every tenant table gets an RLS policy on `workspace_id`, and the application connects as a non-superuser role that cannot bypass it. The session sets the current workspace per transaction. This turns a forgotten `WHERE workspace_id = …` from a data breach into an empty result set. It is the single most valuable decision in this document and costs about a day.
 
+**The policy expression is not free-form** (ADR 0042, proven against Postgres 16 on 21 August 2026). Every tenant table's policy reads:
+
+```sql
+alter table <t> enable row level security;
+alter table <t> force row level security;
+create policy tenant_isolation on <t>
+  using (workspace_id = nullif(current_setting('app.current_workspace', true), '')::uuid);
+```
+
+`nullif` is load-bearing rather than defensive. Without it an empty context raises `invalid input syntax for type uuid` instead of returning no rows, so a forgotten workspace context becomes a 500 rather than an empty list. The `true` second argument to `current_setting` is equally required: without it an *unset* variable raises instead of returning null. Both were found by running it, not by reading it.
+
+`force` is belt and braces: the application role does not own the tables, so it would be subject to policy anyway, but a future migration that changes ownership must not silently open the boundary.
+
+Gate G7 proves this on every pull request, using a fixture table it creates and drops, so it does not wait for the first migration. It also asserts the control — the owner must see *both* tenants' rows — because an empty result that cannot be attributed to RLS proves nothing.
+
 **2. Service layer: authorization.** Role checks (`Owner`, `Sales Representative`) and record-level visibility. **Decided (R3, ADR 0032):** an owner sees everything; a rep sees their own records **plus everything unassigned**; widening is a per-member `can_view_all_leads` grant rather than a workspace-wide toggle. Every tenant list query therefore carries the predicate `role = Owner OR can_view_all_leads OR owner_id = :member OR owner_id IS NULL`.
 
 **3. Interface layer: principals.** Resolves *who* is acting and hands the service layer a principal. Never queries the database directly.
