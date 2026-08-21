@@ -8,7 +8,7 @@ Mobile-first sales & lead management platform for Ghanaian SMEs. The workspace a
 2. **`docs/product-spec.md`**. Full product vision + commercial model, derived from `Convert_Pitch_Deck.pptx`. Reference for intent, not for scope. §12 holds open questions, §13 the deck-vs-scope divergences.
 3. **`docs/pre-development-checklist.md`**. What must be obtained, decided, or proven before implementation starts. IDs (E0–E7, L1–L4, R1–R9, A1–A6, S1–S7, P1–P6) are stable; cite them. §10 is the decision log, record decisions there as they land.
 4. **`docs/architecture.md`**. Target architecture. §3 the decided stack, §6 invariants I1–I12, §20 the decisions it still assumes, §21 how the rules are kept.
-5. **`docs/adr/`**. 49 decision records. **Accepted:** 0001, 0015–0049. **Proposed:** 0002, 0003, 0005–0014. **Superseded:** 0004, by 0043; the branch-model portions of 0019 and 0024, by 0049. Cite by number. Never edit an accepted **Decision**, supersede it — the header and the Enforcement section may be edited, and ADR 0048 requires the Enforcement section to say what exists today rather than what is intended.
+5. **`docs/adr/`**. 50 decision records. **Accepted:** 0001, 0015–0050. **Proposed:** 0002, 0003, 0005–0014. **Superseded:** 0004, by 0043; the branch-model portions of 0019 and 0024, by 0049; the table-classification inventory of 0042 and both `IDENTITY_TABLES` and the `verification_attempt` access mechanism of 0047, by 0050. Cite by number. Never edit an accepted **Decision**, supersede it — the header and the Enforcement section may be edited, and ADR 0048 requires the Enforcement section to say what exists today rather than what is intended.
 6. **`docs/engineering-guardrails.md`**. Layout, the dependency rule, CI gates G1–G14, conventions. With `docs/code-review-checklist.md`, `docs/definition-of-done.md`, `docs/test-strategy.md`.
 7. **`docs/error-handling.md`**. Errors are first class (ADR 0018): one catalogue carrying status, retryability, and the sentence a person reads. Layers below the API throw without logging.
 8. **`docs/design-system.md`**. Shadcn primitives, Convert token tiers, domain tokens for stage/channel/status/window, accessibility and performance rules (ADR 0016).
@@ -47,16 +47,20 @@ registered but remain `todo` until their schema features exist. Guardrails G1–
 four of them run before every push.
 
 **What is deliberately not built.** `packages/infra/src/db/schema.ts` holds `workspace` and
-nothing else, and `TENANT_TABLES` is an empty array. There are no migrations. That is not an
-oversight: the product rules are settled, but their tables must land in an ordered migration plan
-so each tenancy and data-integrity invariant arrives with the table it governs.
+nothing else, and `TABLE_ACCESS` in `packages/infra/src/db/access.ts` classifies that one table.
+There are no migrations. That is not an oversight: the product rules are settled, but their tables
+must land in an ordered migration plan so each tenancy and data-integrity invariant arrives with the
+table it governs. Every declared table must appear in `TABLE_ACCESS` saying how it is protected —
+scoped by workspace, scoped by user, or grants alone with a written reason (ADR 0050) — and `user`
+and `verification_attempt` are named in `TABLE_ACCESS_BLOCKERS`, which fails the build if either is
+declared before CV-19 decides their read path.
 
 **Three gates currently pass without checking anything.** Two by design, one that was miscounted until
 21 August 2026. Say so rather than reporting a green tick:
 
 | Gate | Why it is vacuous today | Real when |
 |------|-------------------------|-----------|
-| ~~G7 migrations and RLS~~ | **No longer vacuous, 21 August 2026.** It creates a fixture tenant table, proves a cross-tenant read returns nothing as the application role, and proves the owner still sees both rows so the result means something (ADR 0042). The *migration* half still skips until migrations exist | the real schema half becomes real with the first migration |
+| ~~G7 migrations and RLS~~ | **Partly vacuous, and it now says which parts.** Six subchecks, reported one line each, tagged real or vacuous (ADR 0050). Real: the application role is neither superuser nor BYPASSRLS; a cross-tenant read on a fixture table returns nothing while the owner sees both rows (ADR 0042); every table declared in `schema.ts` is classified in `TABLE_ACCESS` — one table today, `workspace`. Vacuous: registry-to-catalogue matching, the `workspace-rls` and `user-rls` policy assertions, and the grant comparison, all of which need a public table | each vacuous subcheck becomes real with the first migration that gives it a table |
 | G8 integration tests | `tests/integration/` holds only `.gitkeep` | there is a repository to test against real Postgres |
 | G9 performance budget | `apps/web` is a placeholder page, so the budget is trivially met | the pipeline and contact screens exist |
 | G6 invariant coverage | It checks that a spec **file** exists per invariant. All twelve are `test.todo`, with a header saying so, so nothing is asserted. It was listed among the working gates until this was noticed | the entities land, one invariant at a time, with the table each governs |

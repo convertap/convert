@@ -86,7 +86,7 @@ Two kinds. A machine gate blocks the merge; a human gate is a checklist line som
 | G4 | Lint passes, no new warnings | machine | merge |
 | G5 | Unit tests pass | machine | merge |
 | G6 | An invariant test exists and passes for every I1–I12 | machine | merge |
-| G7 | Migrations apply to a fresh database, every tenant table has RLS the application role is subject to, and the column conventions hold | machine | merge |
+| G7 | Migrations apply to a fresh database, every declared table is classified in `TABLE_ACCESS` and carries exactly the policy or grants its class demands, and the column conventions hold | machine | merge |
 | G8 | Integration tests pass against real Postgres | machine | merge |
 | G9 | Performance budget met on the pipeline and contact screens | machine | merge |
 | G10 | OpenAPI spec regenerates with no diff, and no endpoint is undocumented. Both halves real since ADR 0045 | machine | merge |
@@ -97,6 +97,8 @@ Two kinds. A machine gate blocks the merge; a human gate is a checklist line som
 | G15 | Every Notion page derived from these documents is current, or the drift is acknowledged | machine | merge |
 
 G6 and G7 are the two most easily skipped and the two that matter most. G6 turns the architecture into tests that fail when someone contradicts it. G7 is the difference between multi-tenancy and a data breach with a plausible-looking query.
+
+G7 reports six subchecks separately rather than one verdict, because they become real at different moments and a summary line would let the vacuous ones read as proven (ADR 0048). Two are real today — the application role's attributes, and every table declared in `schema.ts` appearing in `TABLE_ACCESS` — and the four that need a public table say so in their own line. `TABLE_ACCESS` (ADR 0050) replaced `TENANT_TABLES` and `NON_TENANT_TABLES`, which classified by whether a table carried a `workspace_id` column and so had nothing to say about a table protected some other way.
 
 CI jobs are written so they pass on an empty repository and tighten automatically as the corresponding code lands. A pipeline that is red from day one gets ignored, then disabled.
 

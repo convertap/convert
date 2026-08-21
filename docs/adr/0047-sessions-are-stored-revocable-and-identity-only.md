@@ -3,7 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-08-21
 **Supersedes:** 0029, in one part only — the refresh token lifetime
-**Superseded by:** -
+**Superseded by:** 0050, in two parts only — `IDENTITY_TABLES`, replaced by one registry classified by the access control the gate demands; and the `verification_attempt` access mechanism, whose "grant of insert plus select restricted to the identifier presented" describes something Postgres grants cannot do. Everything else here stands, including that `session` carries a policy keyed on `app.current_user` and that identity tables never join the workspace-scoped class
 
 ## Context
 
@@ -199,10 +199,17 @@ rather than this record.
   keep a well-meaning future change from binding sessions to a tenant and reintroducing the
   stale-role lag.
 - **An invariant test that `verification_attempt` has no column holding a code.**
-- **`IDENTITY_TABLES` and its assertion**, checking that every name in it has row-level security
-  enabled and a policy referencing `app.current_user` — and stated as vacuous until the first
-  identity table exists, in the manner `assert:conventions` already reports an empty schema. It is
-  deliberately *not* added now: an assertion over zero tables proves nothing, and adding one would
-  make a fourth vacuous gate in a repository that counts them.
+- **`IDENTITY_TABLES` was superseded before it was built** (ADR 0050). The assertion it described
+  exists, as the `user-rls` class of one registry rather than a list of its own: RLS enabled and
+  forced, exactly one permissive policy to `convert_app`, and a policy expression matched
+  structurally against `app.current_user`. Adding it turned out not to create a fourth vacuous gate,
+  because it changed the loop inside G7's existing vacuous half rather than adding a gate — and it
+  reports "no user-scoped tables yet" in its own line rather than inside a summary. `session` is not
+  in the registry: a table joins it in the migration that creates it, and there is no migration.
+- **`verification_attempt`'s access mechanism is superseded** (ADR 0050). Nothing enforces its read
+  path, because there is no decision to enforce — a grant cannot restrict rows, so the mechanism
+  this record described was never available. Both `user` and `verification_attempt` are named in
+  `TABLE_ACCESS_BLOCKERS`, which fails the build if either is declared or migrated before CV-19
+  decides what replaces it. That list is the enforcement; this bullet is not.
 - **A test that a replayed generation revokes the family**, not the presented token.
 - **A test that the refresh path sets `app.current_user` with `SET LOCAL` inside a transaction**, and that the setting does not survive the transaction. This is the condition the paragraph above depends on, and a bare `SET` would look identical in review.

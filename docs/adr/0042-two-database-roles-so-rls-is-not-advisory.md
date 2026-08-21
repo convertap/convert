@@ -3,7 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-08-21
 **Supersedes:** -
-**Superseded by:** -
+**Superseded by:** 0050, in one part only — the table classification inventory. `TENANT_TABLES` and `NON_TENANT_TABLES` are replaced by one registry keyed by table name; everything else here stands
 
 ## Context
 
@@ -73,7 +73,8 @@ Migrations now need the owner credential in production, so a deploy carries two 
 
 ## Enforcement
 
-- **G7**, extended and ungated: `assert:rls` fails if the application role is superuser or `BYPASSRLS`, if a declared tenant table is owned by it without FORCE, if `DATABASE_URL_APP` is absent, or if any public table is not classified in exactly one of `TENANT_TABLES` and `NON_TENANT_TABLES`. **That last check proves nothing today** (ADR 0048): with no migrations there are no public tables, so the loop has nothing to iterate. It also only checks one direction — a table in the database that is in neither list fails, while a name in `NON_TENANT_TABLES` with no table behind it passes. It becomes real with the first migration.
+- **G7**, extended and ungated: `assert:rls` fails if the application role is superuser or `BYPASSRLS`, if a declared tenant table is owned by it without FORCE, or if `DATABASE_URL_APP` is absent. All three are real today and none of them needs a table to exist.
+- **The classification half of this gate is now ADR 0050's**, which replaced `TENANT_TABLES` and `NON_TENANT_TABLES` with one registry in `packages/infra/src/db/access.ts`. The two-list arrangement described above no longer exists in the code, and the one-directional weakness it admitted — a name with no table behind it passing — is checked in both directions there. Read 0050's Enforcement section for what each half proves today; the short version is that classifying `workspace` from its Drizzle declaration is real now, and everything requiring a public table is still waiting on the first migration.
 - **Both composition roots read `DATABASE_URL_APP` and refuse to boot without it**, with no
   fallback to `DATABASE_URL`, and a unit test per runtime holds that shut. Added 21 August 2026
   after review found `apps/api` and `apps/worker` both reading the owner's credential — this

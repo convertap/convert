@@ -19,7 +19,7 @@ Architecture is [`docs/architecture.md`](./docs/architecture.md); product scope 
 
 The workspace is scaffolded and the api boots. `apps/api`, `apps/web` and `apps/worker` exist alongside `packages/contracts`, `core`, `application` and `infra`, and fifteen guardrails run in CI.
 
-**There is no schema and there are no migrations.** `packages/infra/src/db/schema.ts` holds `workspace` and nothing else, and `TENANT_TABLES` is empty. That is deliberate, not unfinished: the product rules that decide the shape of contact, lead and deal are settled but not yet turned into tables, which is what the *Schema and migration plan* effort is for. Two consequences for you: `pnpm test:integration` has nothing to run, and the G9 performance budget is trivially met because `apps/web` is a placeholder.
+**There is no schema and there are no migrations.** `packages/infra/src/db/schema.ts` holds `workspace` and nothing else, and `TABLE_ACCESS` in `packages/infra/src/db/access.ts` classifies that one table and no others. That is deliberate, not unfinished: the product rules that decide the shape of contact, lead and deal are settled but not yet turned into tables, which is what the *Schema and migration plan* effort is for. Two consequences for you: `pnpm test:integration` has nothing to run, and the G9 performance budget is trivially met because `apps/web` is a placeholder.
 
 Two guardrails run without installing anything:
 

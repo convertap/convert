@@ -16,8 +16,10 @@ and A1–A6 landed on 21 August 2026 as ADR 0029 to ADR 0040, and E6 as ADR 0037
 not the same list, and conflating the two sends the next reader looking for settled work: the live
 blockers are **E2 and E8**, the legal text of **L2 and L3**, and turning the settled rules into
 tables. The first of those is engineering work with no decision left in it. `packages/infra/src/db/schema.ts` holds `workspace` and nothing else, and
-`TENANT_TABLES` is an empty array, deliberately: R1 to R3 and R8 decide the shape of contact,
-lead and deal, and guessing them means building the schema twice.
+`TABLE_ACCESS` in `packages/infra/src/db/access.ts` classifies that one table, deliberately: R1 to
+R3 and R8 decide the shape of contact, lead and deal, and guessing them means building the schema
+twice. Every declared table has to appear in that registry, saying whether it is scoped by
+workspace, scoped by user, or controlled by grants alone with a written reason (ADR 0050).
 
 Two sessions are the critical path:
 
