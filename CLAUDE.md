@@ -48,12 +48,12 @@ nothing else, and `TENANT_TABLES` is an empty array. There are no migrations. Th
 oversight: R1, R2, R3 and R8 decide the shape of contact, lead and deal, and guessing them means
 building the schema twice.
 
-**Three gates therefore currently pass without checking anything.** Say so rather than reporting a
+**Two gates therefore currently pass without checking anything, down from three.** Say so rather than reporting a
 green tick:
 
 | Gate | Why it is vacuous today | Real when |
 |------|-------------------------|-----------|
-| G7 migrations and RLS | No migrations exist, so the job's detect step skips it. `TENANT_TABLES` is empty, so the RLS assertion iterates over nothing | the first tenant table lands |
+| ~~G7 migrations and RLS~~ | **No longer vacuous, 21 August 2026.** It creates a fixture tenant table, proves a cross-tenant read returns nothing as the application role, and proves the owner still sees both rows so the result means something (ADR 0042). The *migration* half still skips until migrations exist | the real schema half becomes real with the first migration |
 | G8 integration tests | `tests/integration/` holds only `.gitkeep` | there is a repository to test against real Postgres |
 | G9 performance budget | `apps/web` is a placeholder page, so the budget is trivially met | the pipeline and contact screens exist |
 

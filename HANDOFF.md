@@ -179,10 +179,37 @@ its own.
 The cost of this rises sharply once the first migration lands, and it needs nothing from anyone
 else. Do it first.
 
-**Three gates pass without checking anything.** Say so rather than reporting a green tick: G7
-(no migrations exist, `TENANT_TABLES` is empty), G8 (`tests/integration/` holds only
-`.gitkeep`), G9 (`apps/web` is a placeholder, so the budget is trivially met). The table in
-`CLAUDE.md` says when each becomes real. G1–G6 and G13–G15 are doing real work.
+**The application role exists, and the deployed databases still do not use it.** ADR 0042 created
+`convert_app` — not a superuser, no BYPASSRLS, cannot own a table so cannot disable RLS, cannot
+create one that escapes `TENANT_TABLES`. CI proves isolation with it on every pull request.
+
+**Railway does not.** Both environments still connect as the `postgres` superuser, so the
+production boundary is exactly as weak as it was. Fixing it is a human step, per environment, and
+cannot be done from a developer machine because the database is on `postgres.railway.internal`:
+
+1. Set `APP_DB_PASSWORD` to a generated secret.
+2. Run `pnpm --filter @convert/infra bootstrap` against that environment.
+3. Add `DATABASE_URL_APP` with the `convert_app` credentials.
+4. Leave `DATABASE_URL` as the owner — migrations need DDL.
+
+**And `DATABASE_URL` is not in Infisical.** Only `NOTION_TOKEN` is. The database URL exists solely
+as a Railway service variable, which contradicts ADR 0020 and means there is no way to verify the
+real database's role from outside Railway. Worth fixing while doing the above.
+
+**Two gates pass without checking anything, down from three.** Say so rather than reporting a
+green tick: G8 (`tests/integration/` holds only `.gitkeep`) and G9 (`apps/web` is a placeholder, so
+the budget is trivially met). The table in `CLAUDE.md` says when each becomes real. G1–G6 and
+G13–G15 are doing real work.
+
+**G7 was the third, and stopped being vacuous on 21 August** (ADR 0042). It now creates a fixture
+tenant table, enables and forces row-level security, and proves as the application role that
+workspace A sees only A, an empty context sees nothing, and an explicit cross-tenant query returns
+nothing — then proves the *owner* still sees both rows, because an empty result that cannot be
+attributed to RLS proves nothing. It was verified by making it fail: pointing `DATABASE_URL_APP` at
+a superuser produces `is a SUPERUSER, so it bypasses every RLS policy` and exits 1.
+
+Its migration half still skips, because no migrations exist, and the script says so out loud rather
+than reporting a bare pass.
 
 **The deploy token is broader than the design wanted, and it now works.** Railway project tokens
 are scoped to one environment and need a verified account; verification routes to the plans page,
