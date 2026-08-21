@@ -10,9 +10,11 @@ Architecture is [`docs/architecture.md`](./docs/architecture.md); product scope 
 
 ## Current state
 
-The repository holds documentation, the directory skeleton, and the guardrails. **The workspace is not scaffolded yet**. There is no `package.json`, no NestJS app, no Next.js app. The stack is decided (ADR 0001: Next.js, NestJS on Fastify, one worker, one Postgres); the scaffolding is the next task.
+The workspace is scaffolded and the api boots. `apps/api`, `apps/web` and `apps/worker` exist alongside `packages/contracts`, `core`, `application` and `infra`, and fifteen guardrails run in CI.
 
-Two guardrails already run and need nothing installed:
+**There is no schema and there are no migrations.** `packages/infra/src/db/schema.ts` holds `workspace` and nothing else, and `TENANT_TABLES` is empty. That is deliberate, not unfinished: the product rules that decide the shape of contact, lead and deal are settled but not yet turned into tables, which is what the *Schema and migration plan* effort is for. Two consequences for you: `pnpm test:integration` has nothing to run, and the G9 performance budget is trivially met because `apps/web` is a placeholder.
+
+Two guardrails run without installing anything:
 
 ```bash
 python tools/check_boundaries.py            # layer boundaries (gate G1)
@@ -46,11 +48,26 @@ Forgetting the prefix produces a missing-variable error rather than an obvious "
 pnpm install
 pnpm dev                 # web, api, and worker together
 pnpm typecheck           # builds the workspace packages first, then checks the apps
-pnpm lint
+pnpm lint                # --max-warnings=0, so a warning fails it (gate G4)
 pnpm test
-pnpm test:integration    # needs a local Postgres
+pnpm test:integration    # needs a local Postgres; nothing to run until migrations exist
 pnpm guardrails          # boundaries, invariant coverage, token contrast
 ```
+
+### A database, from nothing
+
+The api and worker connect as `convert_app`, never as the owner (ADR 0042), so they need **both** connection strings present and will refuse to start on the wrong one.
+
+```bash
+pnpm db:up                                    # Postgres 16 in Docker, from docker-compose.yml
+infisical run --env=dev -- pnpm --filter @convert/infra bootstrap   # creates convert_app
+infisical run --env=dev -- pnpm db:assert-rls                       # proves RLS applies to it
+infisical run --env=dev -- pnpm --filter @convert/infra assert:conventions
+```
+
+`bootstrap` is what creates the application role. Skip it and `assert:rls` fails saying the role does not exist, which is the intended message rather than a puzzle.
+
+**`infisical run` is how a process gets its environment.** Exporting `.env.local` does *not* feed the api or the worker: neither initialises `dotenv`, by design under ADR 0020. If you must work offline, export the file and then either source it into your shell or pass it with `node --env-file`; do not expect a process to find it on its own.
 
 ## The loop
 
