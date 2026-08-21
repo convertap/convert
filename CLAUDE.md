@@ -133,6 +133,42 @@ something different. Every diagram in `docs/` is mermaid for this reason, so kee
 
 A stale stakeholder page is worse than no page, because it gets believed.
 
+## Agent skills
+
+### Issue tracker
+
+The **Backlog** database in Notion, under Delivery. Notion is not a tracker the skills support
+first-class, so the workflow is described in prose and every wayfinding operation is defined in
+Notion terms: see `docs/agents/issue-tracker.md`. GitHub Issues was rejected because this
+repository is public.
+
+**Notion is private and this repository is not.** Named pilot businesses (P1), the written kill
+criteria (P6), and margin figures live in Notion only, and never travel into a commit, an ADR, or a
+pull request.
+
+### Triage labels
+
+Expressed through the Backlog's own `Status`, `Waiting on`, `Size` and `Owner` fields rather than a
+parallel label vocabulary, so the stakeholder board and the agent's view cannot disagree. See
+`docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: the workspace packages are layers of one domain, enforced by `.boundaries.json` and
+G1. No `CONTEXT.md` yet, but its glossary is now decidable from ADR 0030–0040. See
+`docs/agents/domain.md`.
+
+### Planning a large effort
+
+`/wayfinder` charts work too big for one session as a map of **decision** tickets, worked one at a
+time until the route is clear. It plans; it does not build. Both `/wayfinder` and
+`/setup-matt-pocock-skills` are `disable-model-invocation`, so an agent cannot start them — a human
+types the slash command.
+
+Worth knowing before reaching for it: after the 21 August session, ten of the fourteen
+build-blocking decisions are settled, so the remaining fog is small — E2, E8, and the legal text of
+L2 and L3. Turning settled rules into ordered, buildable tickets is `/to-tickets`, not wayfinder.
+
 ## Conventions
 
 - Docs live in `docs/`, kebab-case filenames, `##` for top-level sections.
