@@ -159,7 +159,9 @@ Each of these has bitten similar products. They are here because a reviewer need
 
 No agent or tool co-authorship trailers. Commits carry their human author only.
 
-**Branches.** `type/short-description`, e.g. `feat/lead-capture-form`. Work off `main`; no long-lived branches while the team is this size.
+**Branches.** `type/short-description`, e.g. `feat/lead-capture-form`. Work branches start from
+`develop`. Releases move by pull request through `develop` -> `testing` -> `staging` -> `main`;
+each long-lived branch accepts changes only from the branch immediately to its left.
 
 **Naming.** Domain vocabulary from `architecture.md` §6 and the ubiquitous language in `mvp-scope.md`. A `Lead` is not an `Opportunity`; a `Deal` is not a `Sale`. If the product doc and the code disagree on a word, one of them is a bug.
 
@@ -206,36 +208,47 @@ If a PR needs a walkthrough to be understood, it is too big or the code is uncle
 
 ## 8. The git workflow
 
-`main` is protected. Nobody pushes to it, including the maintainer, GitHub enforces
-this for administrators too.
+`develop`, `testing`, `staging`, and `main` are protected. Nobody pushes to them, including the
+maintainer; GitHub enforces this for administrators too. Their roles are fixed:
+
+| Branch | Receives PRs from | Deployment |
+|--------|-------------------|------------|
+| `develop` | feature and fix branches | none |
+| `testing` | `develop` | Railway `test` |
+| `staging` | `testing` | Railway `staging` |
+| `main` | `staging` | production release; deployment not configured yet |
 
 **The loop**
 
-1. Branch: `type/short-description`.
+1. Branch from `develop`: `type/short-description`.
 2. Commit in Conventional Commits form. The `commit-msg` hook checks the shape and
    rejects agent or tool co-authorship trailers; commits carry their human author only.
 3. Push. The `pre-push` hook runs the boundary, invariant, contrast, and Notion-mirror
    checks, the four that need no dependencies and finish in about a second.
-4. Open a pull request. All four CI jobs must pass, the branch must be up to date with
-   `main`, and every review conversation must be resolved.
+4. Open a pull request to `develop`. All four CI jobs must pass, the branch must be up to date
+   with `develop`, and every review conversation must be resolved.
 5. Squash merge. The branch deletes itself.
+6. Promote a release only with `develop` -> `testing`, `testing` -> `staging`, and `staging` ->
+   `main` pull requests. Use a merge commit for promotion, never squash or rebase. The same gate
+   suite runs at every step. Promotion to `staging` or `main` also requires both services to have
+   successful deployment checks in the preceding environment.
 
 **Settings, and why**
 
 | Setting | Value | Reason |
 |---------|-------|--------|
 | Required checks | the four CI jobs, **by exact job name** | Gates G1–G15 are the merge criteria |
-| Strict (up to date) | on | A green check against stale `main` proves nothing |
+| Strict (up to date) | on | A green check against a stale target branch proves nothing |
 | Administrators | enforced | A rule the owner can skip is a suggestion |
-| Required approvals | 0 | A solo maintainer cannot approve their own PR; `main` would deadlock. Raise to 1 the day a second developer joins |
+| Required approvals | 0 | A solo maintainer cannot approve their own PR; promotion would deadlock. Raise to 1 the day a second developer joins |
 | Code-owner review | off | Same reason. Turn on with the approval count |
-| Linear history | on | Squash-only, so history stays readable |
+| Merge method | squash into `develop`; merge commit for promotion | Feature history stays compact while long-lived branches retain ancestry |
+| Linear history | `develop` on; promotion branches off | Promotion merge commits preserve the commit chain between environments |
 | Force push / deletion | blocked | no |
 | Conversation resolution | required | Stops review comments being merged past |
 
-The zero-approval setting is the one compromise here, and it is temporary. Everything
-else, checks, up-to-date branches, no direct pushes, no force pushes, applies to
-everyone from today.
+The zero-approval setting is the one compromise here, and it is temporary. Everything else,
+checks, up-to-date branches, no direct pushes, no force pushes, applies to every protected branch.
 
 **A job name in `ci.yml` is the identifier branch protection matches on.** Renaming a job
 silently stops the required check from ever reporting, and the pull request becomes
@@ -243,7 +256,7 @@ unmergeable with every visible check green, which reads as a GitHub fault rather
 our own edit. Rename a job and update the required contexts in the same sitting:
 
 ```bash
-gh api repos/convertap/convert/branches/main/protection/required_status_checks \
+gh api repos/convertap/convert/branches/BRANCH/protection/required_status_checks \
   --jq '{strict, contexts}'          # read the current contract before changing a name
 ```
 

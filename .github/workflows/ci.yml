@@ -2,10 +2,9 @@ name: CI
 
 on:
   push:
-    # develop is here because deploy-test keys on it (ADR 0024). Without it the
-    # workflow never fires for develop, so the deploy job's condition is
-    # unreachable and the test environment silently never updates.
-    branches: [main, develop]
+    # All promotion branches run the same gates. Only testing and staging have
+    # deploy jobs; develop is integration-only and main is the production branch.
+    branches: [develop, testing, staging, main]
   pull_request:
 
 permissions:
@@ -17,7 +16,9 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Stale PR checks are disposable. A branch push may already have handed a
+  # build to Railway, so cancelling it can leave an unverified release running.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Not a secret: a project id is useless without a token (ADR 0024).
@@ -28,6 +29,9 @@ jobs:
     name: G1-G2 boundaries and ADR discipline, G14-G15 secrets and mirror
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: read
     steps:
       - uses: actions/checkout@v7
         with:
@@ -36,6 +40,87 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
+
+      # ADR 0049 - long-lived branches advance in one direction only. Branch
+      # protection requires this job, so a PR cannot skip an environment.
+      - name: Validate promotion route
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_BRANCH: ${{ github.base_ref }}
+          HEAD_BRANCH: ${{ github.head_ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          case "$BASE_BRANCH" in
+            testing) expected=develop ;;
+            staging) expected=testing ;;
+            main) expected=staging ;;
+            develop)
+              case "$HEAD_BRANCH" in
+                testing|staging|main)
+                  echo "::error::Long-lived branches cannot be promoted backward into develop."
+                  exit 1
+                  ;;
+              esac
+              exit 0
+              ;;
+            *)
+              echo "::error::Unsupported pull request target: $BASE_BRANCH"
+              exit 1
+              ;;
+          esac
+
+          if [ "$HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" ]; then
+            echo "::error::Promotion pull requests must come from $GITHUB_REPOSITORY."
+            exit 1
+          fi
+
+          if [ "$HEAD_BRANCH" != "$expected" ]; then
+            echo "::error::Pull requests to $BASE_BRANCH must come from $expected, not $HEAD_BRANCH."
+            exit 1
+          fi
+
+      # A branch name proves where a candidate came from; these check runs prove
+      # that candidate actually deployed and served in the preceding environment.
+      - name: Validate source environment
+        if: >-
+          github.event_name == 'pull_request'
+          && (github.base_ref == 'staging' || github.base_ref == 'main')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+          REQUIRED_ENVIRONMENT: ${{ github.base_ref == 'staging' && 'test' || 'staging' }}
+        run: |
+          for service in api web; do
+            check_name="Deploy $service to $REQUIRED_ENVIRONMENT"
+            response=$(curl --fail-with-body --silent --show-error --get \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              --data-urlencode "check_name=$check_name" \
+              --data-urlencode "filter=latest" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$SOURCE_SHA/check-runs")
+            conclusion=$(jq -r '.check_runs[0].conclusion // "missing"' <<< "$response")
+            if [ "$conclusion" != "success" ]; then
+              echo "::error::$check_name is $conclusion for $SOURCE_SHA; deploy and prove the source environment before promotion."
+              exit 1
+            fi
+          done
+
+      # Squash or rebase promotion rewrites the commit and leaves the environment
+      # branches permanently divergent. Deployment branches must receive a merge
+      # commit; this post-merge check blocks deployment if the wrong button was used.
+      - name: Validate promotion merge
+        if: >-
+          github.event_name == 'push'
+          && (github.ref == 'refs/heads/testing'
+          || github.ref == 'refs/heads/staging'
+          || github.ref == 'refs/heads/main')
+        run: |
+          parent_count=$(git rev-list --parents -n 1 HEAD | awk '{ print NF - 1 }')
+          if [ "$parent_count" -ne 2 ]; then
+            echo "::error::$GITHUB_REF_NAME must advance with a merge commit from its promotion PR."
+            exit 1
+          fi
 
       # G1 - layer boundaries. No dependencies, runs in under a second.
       - name: Check layer boundaries
@@ -253,16 +338,17 @@ jobs:
 
   # ---------------------------------------------------------------- deployment
   #
-  # Nothing deploys because a commit appeared on a branch: Railway's deployment
-  # triggers are deleted, and these jobs are the only path (ADR 0024). `needs`
-  # is the enforcement, so a deploy cannot start until every gate has passed.
+  # Railway's own deployment triggers are deleted, and these jobs are the only
+  # deployment path (ADR 0024, ADR 0049). `needs` is the enforcement, so a
+  # deploy cannot start until every gate has passed. The protected branch flow is
+  # develop -> testing -> staging -> main. Develop and main never deploy here.
   #
   # Each job has its own switch, DEPLOY_TEST and DEPLOY_STAGING, so one
   # environment can be turned off without touching the other. Both are off
   # until the variable is "true" and that environment holds a token.
   # Merging a deploy job that cannot authenticate would put a permanent red
-  # job on main, and a red main everyone learns to ignore is worse than no
-  # deploy job at all.
+  # job on its deployment branch, and a red branch everyone learns to ignore
+  # is worse than no deploy job at all.
   #
   # The credential is passed as RAILWAY_API_TOKEN, not RAILWAY_TOKEN. The CLI
   # reads the two as different token types: RAILWAY_TOKEN must be a project
@@ -290,7 +376,7 @@ jobs:
     needs: [guardrails, quality, database, performance]
     if: >-
       github.event_name == 'push'
-      && github.ref == 'refs/heads/develop'
+      && github.ref == 'refs/heads/testing'
       && vars.DEPLOY_TEST == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -347,7 +433,7 @@ jobs:
     needs: [guardrails, quality, database, performance]
     if: >-
       github.event_name == 'push'
-      && github.ref == 'refs/heads/main'
+      && github.ref == 'refs/heads/staging'
       && vars.DEPLOY_STAGING == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20

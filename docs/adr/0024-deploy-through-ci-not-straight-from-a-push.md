@@ -3,7 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-08-20
 **Supersedes:** -
-**Superseded by:** -
+**Superseded by:** 0049 (branch routing only)
 
 ## Context
 

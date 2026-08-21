@@ -18,12 +18,37 @@ refuses to fall back to `DATABASE_URL`.
 
 ## Deploy
 
-1. Merge to `develop` for test or `main` for staging after all gates pass.
-2. Enable the corresponding `DEPLOY_TEST` or `DEPLOY_STAGING` GitHub environment variable.
-3. The API pre-deploy phase runs role bootstrap and then every Drizzle migration. A failure stops
+1. Merge feature pull requests to `develop`. This runs every gate and does not deploy.
+2. Promote with pull requests in order: `develop` -> `testing` -> `staging` -> `main`. Do not skip
+   a branch or push directly to a long-lived branch. Merge promotion PRs with **Create a merge
+   commit**; squash and rebase are only for feature PRs into `develop`.
+3. A merge to `testing` deploys Railway `test` when `DEPLOY_TEST=true`. A merge to `staging`
+   deploys Railway `staging` when `DEPLOY_STAGING=true`. A merge to `main` records the production
+   release; production deployment is not configured yet.
+   The PR to `staging` requires successful test deployment checks for both services on its source
+   commit; the PR to `main` requires the corresponding staging checks.
+4. The API pre-deploy phase runs role bootstrap and then every Drizzle migration. A failure stops
    the deployment before traffic changes.
-4. Railway waits for `/ready`, which executes `select 1` through `DATABASE_URL_APP`.
-5. GitHub probes the same readiness URL after `railway up` returns.
+5. Railway waits for `/ready`, which executes `select 1` through `DATABASE_URL_APP`.
+6. GitHub probes the same readiness URL after `railway up` returns.
+
+### One-time branch bootstrap
+
+Complete this before the workflow change in ADR 0049 is merged:
+
+1. Fast-forward `develop` to the current `main` tip. This is the one-time baseline alignment; do
+   not merge `main` backward after the promotion guardrail is active.
+2. Create `testing` and `staging` from that aligned `develop` tip.
+3. Make `develop` the GitHub default branch so new and automated pull requests target integration;
+   `main` remains the production release branch.
+4. Enable squash merges and merge commits in repository settings. Require linear history on
+   `develop`, but not on `testing`, `staging`, or `main`.
+5. Protect all four branches with the four required CI jobs, strict checks, administrator
+   enforcement, resolved conversations, and blocked force pushes and deletion.
+6. Restrict GitHub environment `test` to branch `testing` and environment `staging` to branch
+   `staging`.
+7. Land the workflow change through a feature PR to `develop`, then promote it through each branch
+   with merge commits. That first promotion proves the route before product development uses it.
 
 The worker is not deployed until it has a durable handler and shutdown behavior. The web service
 has no database pre-deploy command.
