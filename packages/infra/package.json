@@ -9,6 +9,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit false --emitDeclarationOnly",
     "test": "vitest run --project unit",
     "generate": "drizzle-kit generate",
+    "bootstrap": "tsx scripts/bootstrap.ts",
     "migrate": "tsx scripts/migrate.ts",
     "assert:rls": "tsx scripts/assert-rls.ts",
     "build": "tsc -p tsconfig.json"

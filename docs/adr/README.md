@@ -43,6 +43,7 @@ One file per decision. Numbered, immutable once accepted, superseded rather than
 | [0039](./0039-hubtel-for-payments-and-a-two-stage-invoice-compliance-path.md) | Hubtel for payments, and a two-stage path to lawful invoicing | Accepted |
 | [0040](./0040-consent-operating-rules.md) | How consent is captured, blocked on, and withdrawn | Accepted |
 | [0041](./0041-decision-records-are-not-rewritten-when-vocabulary-changes.md) | Decision records are not rewritten when vocabulary changes | Accepted |
+| [0042](./0042-two-database-roles-so-rls-is-not-advisory.md) | Two database roles, so row-level security is not advisory | Accepted |
 
 Statuses: **Proposed** (written, not yet ratified) · **Accepted** (in force) · **Superseded** (replaced, kept for the record) · **Rejected** (considered and declined, kept so it is not re-litigated).
 

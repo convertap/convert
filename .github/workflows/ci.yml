@@ -147,25 +147,45 @@ jobs:
           count=$(find packages/infra/src/db/migrations -type f 2>/dev/null | wc -l)
           echo "ready=$([ "$count" -gt 0 ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
 
+      # Not gated on migrations existing. The tenancy role check below is meaningful with
+      # zero tables and zero migrations, and gating it was why G7 stayed vacuous.
       - uses: pnpm/action-setup@v6
-        if: steps.mig.outputs.ready == 'yes'
       - uses: actions/setup-node@v7
-        if: steps.mig.outputs.ready == 'yes'
         with:
           node-version: 22
           cache: pnpm
       - name: Install
-        if: steps.mig.outputs.ready == 'yes'
         run: pnpm install --frozen-lockfile
 
-      # G7 - migrations apply to an empty database, and every tenant table has RLS.
-      - name: G7 migrate and assert RLS
+      # G7 - migrations apply to an empty database, and every tenant table has RLS that
+      # the application role is actually SUBJECT to.
+      #
+      # Two connection strings on purpose. DATABASE_URL is the owner, used for DDL and for
+      # reading the catalogue. DATABASE_URL_APP is the role the application would really
+      # use. Asserting RLS while connected as postgres proves nothing, because a superuser
+      # always bypasses it (ADR 0042).
+      # Runs with or without migrations. Creates convert_app and asserts it is neither a
+      # superuser nor BYPASSRLS - the property without which every policy is decoration.
+      - name: G7 bootstrap the application role
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/convert_test
+          APP_DB_PASSWORD: ci-throwaway
+        run: pnpm --filter @convert/infra bootstrap
+
+      - name: G7 migrate
         if: steps.mig.outputs.ready == 'yes'
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/convert_test
-        run: |
-          pnpm --filter @convert/infra migrate
-          pnpm --filter @convert/infra assert:rls
+        run: pnpm --filter @convert/infra migrate
+
+      # Two connection strings on purpose. DATABASE_URL is the owner, for the catalogue.
+      # DATABASE_URL_APP is the role the application would really use. Asserting RLS while
+      # connected as postgres proves nothing, because a superuser always bypasses it.
+      - name: G7 assert RLS applies to the application role
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/convert_test
+          DATABASE_URL_APP: postgres://convert_app:ci-throwaway@localhost:5432/convert_test
+        run: pnpm --filter @convert/infra assert:rls
 
       # G8 - integration tests against the real thing, never a mock database.
       - name: G8 integration tests
