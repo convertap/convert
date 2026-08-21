@@ -4,28 +4,55 @@ import { createDatabase } from '../src/db/client';
 import type { Database } from '../src/db/client';
 import {
   APP_ROLE,
+  CLASSIFIABLE_RELKINDS,
   FORBIDDEN_PRIVILEGES,
+  IDENTIFIER,
   SCOPE_GUC,
   TABLE_ACCESS,
   TABLE_ACCESS_BLOCKERS,
+  TENANT_KEY,
+  TENANT_TABLE,
   canonicalPolicySql,
 } from '../src/db/access';
 import type { TableAccess } from '../src/db/access';
 import * as schema from '../src/db/schema';
 
 /**
- * Gate G7, the assertion half.
+ * Gate G7, the assertion half. Nine checks, reported one line each and tagged real or vacuous.
  *
- * Six checks, reported one line each, because they become real at different moments and a single
- * summary line would let the vacuous ones pass for proven (ADR 0048). Today two are real - the
- * application role's attributes, and every declared Drizzle table being classified - and the rest
- * announce that there is no schema to look at yet.
+ * They become real at different moments, and a single verdict would let the vacuous ones pass for
+ * proven (ADR 0048). Three are real with no migrations: the application role's attributes, every
+ * declared Drizzle table being classified, and the behavioural isolation probe. The other six need
+ * a public table and say so in their own line.
  *
- * The registry the checks read is `src/db/access.ts` (ADR 0050). It replaced `TENANT_TABLES` and
- * `NON_TENANT_TABLES`, which classified by whether a table carried a `workspace_id` column and so
- * had nothing to say about a table protected some other way.
+ * The registry the checks read is `src/db/access.ts` (ADR 0050).
  *
- * Two things are worth knowing before changing anything here:
+ * Six of the checks exist because two independent reviews took the first version of this file
+ * apart, and every hole they found was a real, unprotected table passing green:
+ *
+ *   - **Foreign keys, not column names.** `role-grants` was policed by looking for a column called
+ *     `workspace_id`. A child table with an FK to tenant data and no such column of its own -
+ *     `lead_note` with a `lead_id` - passed with a `reason` a reviewer would accept, and returned
+ *     every tenant's rows. Reachability is a property of the schema graph, so the graph gets read.
+ *   - **Views and materialized views are refused.** They are not `relkind = 'r'`, so the original
+ *     queries could not see them. A view runs with its owner's rights unless `security_invoker` is
+ *     set, and migrations run as the owner; a materialized view is never subject to RLS at all.
+ *     Both were demonstrated leaking. Until there is a decision, their existence fails the build.
+ *   - **Partitioned parents are 'p', not 'r'.** A partitioned tenant table with grants and no RLS
+ *     passed while the gate printed "there are no public tables yet". Partitions inherit their
+ *     root's entry and are held to the same rules, because reading a partition directly applies
+ *     that partition's policies rather than its parent's.
+ *   - **Privileges are read with `has_table_privilege` and `has_any_column_privilege`**, not
+ *     `information_schema.role_table_grants`, which shows neither column-level grants nor anything
+ *     inherited through a group role. `grant select (name) on workspace to convert_app` was
+ *     invisible while the entry declared no privileges at all.
+ *   - **TRUNCATE, REFERENCES and TRIGGER are checked on every class** - they used to be checked
+ *     everywhere except the tables that hold tenant data.
+ *   - **`scopeColumn` is verified against the catalogue**: it must exist, be a NOT NULL `uuid`, and
+ *     either reference `workspace(id)` or be it. A policy on `created_by_id` is canonical in shape
+ *     and isolates by the wrong axis.
+ *
+ * Two things about the design are worth knowing before changing anything.
  *
  * The role check is the one whose absence made everything else a false comfort. A superuser bypasses
  * RLS, so does BYPASSRLS, and so does a table's owner unless the table is FORCE ROW LEVEL SECURITY.
@@ -49,13 +76,14 @@ const ENTRIES = Object.entries(TABLE_ACCESS) as [string, TableAccess][];
 
 /** The registry widened for lookup by a name that may not be in it. */
 const REGISTRY: Record<string, TableAccess | undefined> = TABLE_ACCESS;
+
 const RLS_KINDS = ['workspace-rls', 'user-rls'] as const;
 type RlsKind = (typeof RLS_KINDS)[number];
 
-/** Tables the registry says carry a policy, whatever it is scoped by. */
-const rlsEntries = ENTRIES.filter((entry): entry is [string, TableAccess & { kind: RlsKind }] =>
-  RLS_KINDS.includes(entry[1].kind as RlsKind),
-);
+/** Narrows the entry, not just its tag, so `scopeColumn` is reachable after the check. */
+type RlsAccess = Extract<TableAccess, { kind: RlsKind }>;
+const isRlsAccess = (access: TableAccess): access is RlsAccess =>
+  (RLS_KINDS as readonly string[]).includes(access.kind);
 
 /**
  * Every table declared in `schema.ts`, found by asking Drizzle rather than by keeping a list.
@@ -66,31 +94,84 @@ const declaredTables = (Object.values(schema) as unknown[])
   .map((table) => getTableName(table))
   .sort();
 
+type Relation = {
+  relname: string;
+  relkind: string;
+  rowsecurity: boolean;
+  forced: boolean;
+  owner: string;
+  root: string;
+  isPartition: boolean;
+};
+
+type ForeignKey = {
+  child: string;
+  parent: string;
+  columns: string[];
+  parentColumns: string[];
+  notNull: boolean;
+  isUuid: boolean;
+};
+
+type Column = { relname: string; column: string; type: string; notNull: boolean };
+
 /**
- * The canonical policy expression, as this Postgres prints it.
+ * The canonical policy expression for a class and column, as this Postgres prints it.
  *
  * Derived rather than hardcoded. `pg_get_expr` output is formatting-sensitive - casts get spelled
- * out, literals get `::text` - and pinning a string here would mean a server upgrade failing a
- * policy that is in fact correct. So the script writes the canonical policy itself, on a throwaway
- * table, and reads back the form to compare against. Substring matching was rejected outright: a
- * check that `true or workspace_id = nullif(...)` passes is not a check (ADR 0050).
+ * out, literals get `::text`, operands of OR get their own parentheses - so pinning a string would
+ * mean a server upgrade failing a policy that is in fact correct. The script writes the canonical
+ * policy itself, on a throwaway table, with the same column the real table uses, and reads back the
+ * printed form. Nothing is substituted into the result afterwards, which is what the first version
+ * did.
+ *
+ * Substring matching was rejected outright: a check that `true or workspace_id = nullif(...)` passes
+ * is not a check (ADR 0050).
  */
-const deriveCanonicalQual = async (db: Database, kind: RlsKind): Promise<string> => {
-  const probe = 'rls_expr_probe';
-  await db.execute(sql.raw(`drop table if exists ${probe}`));
-  await db.execute(sql.raw(`create table ${probe} (scope_id uuid not null)`));
-  await db.execute(sql.raw(`alter table ${probe} enable row level security`));
-  await db.execute(sql.raw(canonicalPolicySql(probe, kind, 'scope_id')));
-  const printed = await db.execute<{ qual: string }>(sql`
-    select pg_get_expr(p.polqual, p.polrelid) as qual
-    from pg_policy p
-    join pg_class c on c.oid = p.polrelid
-    where c.relname = ${probe}
+const deriveCanonicalQual = async (
+  db: Database,
+  kind: RlsKind,
+  scopeColumn: string,
+): Promise<string> => {
+  const probe = `rls_expr_probe_${kind.replace('-', '_')}`;
+  if (!IDENTIFIER.test(probe)) throw new Error(`probe name ${probe} is not an identifier`);
+  if (!IDENTIFIER.test(scopeColumn)) throw new Error(`${scopeColumn} is not an identifier`);
+
+  // Never drop blindly. The first version opened with `drop table if exists`, which would have
+  // deleted a real table that happened to carry this name.
+  const clash = await db.execute<{ ok: boolean }>(sql`
+    select true as ok
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public' and c.relname = ${probe}
   `);
-  await db.execute(sql.raw(`drop table if exists ${probe}`));
-  const qual = printed.rows[0]?.qual;
-  if (!qual) throw new Error(`could not derive the canonical ${kind} expression`);
-  return qual;
+  if (clash.rows.length > 0) {
+    throw new Error(
+      `${probe} already exists in the public schema. That is this script's fixture name, so ` +
+        'either a previous run died before dropping it or a migration has claimed the name. ' +
+        'Inspect it rather than letting the gate drop it.',
+    );
+  }
+
+  try {
+    await db.execute(sql.raw(`create table public.${probe} (${scopeColumn} uuid not null)`));
+    await db.execute(sql.raw(`alter table public.${probe} enable row level security`));
+    await db.execute(sql.raw(canonicalPolicySql(`public.${probe}`, kind, scopeColumn)));
+    const printed = await db.execute<{ qual: string }>(sql`
+      select pg_get_expr(p.polqual, p.polrelid) as qual
+      from pg_policy p
+      join pg_class c on c.oid = p.polrelid
+      join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and c.relname = ${probe}
+    `);
+    const qual = printed.rows[0]?.qual;
+    if (!qual) throw new Error(`could not derive the canonical ${kind} expression`);
+    return qual;
+  } finally {
+    // In a finally, so a throw between create and read cannot leave the fixture behind to be
+    // reported as an unclassified table on the next run.
+    await db.execute(sql.raw(`drop table if exists public.${probe}`));
+  }
 };
 
 const main = async () => {
@@ -111,7 +192,7 @@ const main = async () => {
 
   const subchecks: Subcheck[] = [];
 
-  // ---- 1. every declared table is classified. Real today. ------------------------------------
+  // ---- 1. registry hygiene, and every declared table classified. Real today. -----------------
 
   const classification: string[] = [];
   const blocked = new Set(Object.keys(TABLE_ACCESS_BLOCKERS));
@@ -124,6 +205,9 @@ const main = async () => {
           'reservation, not a classification - resolve the read path or remove the entry',
       );
     }
+    if (!IDENTIFIER.test(name)) {
+      classification.push(`${name}: registry key is not a bare SQL identifier`);
+    }
   }
 
   for (const [name, access] of ENTRIES) {
@@ -133,8 +217,11 @@ const main = async () => {
           'unexplained absence of a policy is what ADR 0050 exists to stop reading as a decision',
       );
     }
-    if (access.kind !== 'role-grants' && access.scopeColumn.trim() === '') {
-      classification.push(`${name}: ${access.kind} with no scopeColumn, so no policy can be built`);
+    if (isRlsAccess(access) && !IDENTIFIER.test(access.scopeColumn)) {
+      classification.push(
+        `${name}: scopeColumn ${JSON.stringify(access.scopeColumn)} is not a bare SQL ` +
+          'identifier, and it reaches create policy as text',
+      );
     }
   }
 
@@ -185,23 +272,27 @@ const main = async () => {
     }
   }
 
-  // Owning a table also bypasses its policies unless the table forces RLS.
-  if (role) {
-    const owned = await db.execute<{ tablename: string; forced: boolean }>(sql`
-      select c.relname as tablename, c.relforcerowsecurity as forced
-      from pg_class c
-      join pg_namespace n on n.oid = c.relnamespace
-      join pg_roles o on o.oid = c.relowner
-      where n.nspname = 'public' and c.relkind = 'r' and o.rolname = ${role.current_user}
-    `);
-    const needsPolicy = new Set(rlsEntries.map(([name]) => name));
-    for (const row of owned.rows) {
-      if (needsPolicy.has(row.tablename) && !row.forced) {
-        roleFailures.push(
-          `${row.tablename}: is owned by the application role and is not FORCE ROW LEVEL ` +
-            'SECURITY, so the owner bypasses its policies',
-        );
-      }
+  // A default privilege granting table rights to the application role defeats the registry for
+  // every table a later migration creates. Deleting the ALTER DEFAULT PRIVILEGES statement from
+  // bootstrap.sql does not undo one already installed in an existing database - that needs an
+  // explicit REVOKE - so the catalogue state is asserted rather than assumed.
+  const defaults = await db.execute<{ schema: string; grantee: string; privilege: string }>(sql`
+    select n.nspname as schema,
+           coalesce(pg_get_userbyid(a.grantee), 'PUBLIC') as grantee,
+           a.privilege_type as privilege
+    from pg_default_acl d
+    join pg_namespace n on n.oid = d.defaclnamespace
+    cross join lateral aclexplode(d.defaclacl) as a
+    where d.defaclobjtype = 'r'
+  `);
+  for (const row of defaults.rows) {
+    if (row.grantee === APP_ROLE || row.grantee === 'PUBLIC') {
+      roleFailures.push(
+        `default privileges in schema ${row.schema} grant ${row.privilege} on future tables to ` +
+          `${row.grantee}, so every table a migration creates holds it whatever TABLE_ACCESS ` +
+          `declares. Revoke it: alter default privileges in schema ${row.schema} revoke ` +
+          `${row.privilege} on tables from ${row.grantee}`,
+      );
     }
   }
 
@@ -209,29 +300,131 @@ const main = async () => {
     name: 'application role attributes',
     failures: roleFailures,
     real: true,
-    verdict: `${role?.current_user} is neither superuser nor BYPASSRLS, and owns no table that needs a policy`,
+    verdict:
+      `${role?.current_user} is neither superuser nor BYPASSRLS, and no default privilege grants ` +
+      'rights on future tables',
   });
 
-  // ---- catalogue state, shared by the checks below ------------------------------------------
+  // ---- catalogue state, shared by everything below -------------------------------------------
+  //
+  // The `rls\_%` exclusion keeps this script's own fixtures out of the picture. They are created
+  // and dropped inside it, and a concurrent run would otherwise see them.
 
-  const publicTables = await db.execute<{
-    tablename: string;
-    rowsecurity: boolean;
-    forced: boolean;
-  }>(sql`
-    select c.relname as tablename,
+  const relations = await db.execute<Relation>(sql`
+    select c.relname,
+           c.relkind,
            c.relrowsecurity as rowsecurity,
-           c.relforcerowsecurity as forced
+           c.relforcerowsecurity as forced,
+           o.rolname as owner,
+           coalesce(rt.relname, c.relname) as root,
+           c.relispartition as "isPartition"
     from pg_class c
     join pg_namespace n on n.oid = c.relnamespace
-    where n.nspname = 'public' and c.relkind = 'r'
+    join pg_roles o on o.oid = c.relowner
+    left join pg_class rt on rt.oid = pg_partition_root(c.oid)
+    where n.nspname = 'public'
+      and c.relkind in ('r', 'p', 'v', 'm', 'f')
+      and c.relname not like 'rls\_%'
   `);
 
-  const inDatabase = new Map(publicTables.rows.map((r) => [r.tablename, r]));
+  const tables = relations.rows.filter((r) =>
+    (CLASSIFIABLE_RELKINDS as readonly string[]).includes(r.relkind),
+  );
+  const inDatabase = new Map(tables.map((r) => [r.relname, r]));
 
-  // ---- 3. the registry matches the catalogue, both directions. -------------------------------
+  /**
+   * The registry entry governing a relation. A partition has no entry of its own - it inherits its
+   * root's, and is then held to the same rules, because selecting from a partition directly applies
+   * that partition's policies rather than the parent's.
+   */
+  const entryFor = (t: Relation): TableAccess | undefined =>
+    REGISTRY[t.isPartition ? t.root : t.relname];
+
+  const columns = await db.execute<Column>(sql`
+    select c.relname,
+           a.attname as column,
+           t.typname as type,
+           a.attnotnull as "notNull"
+    from pg_attribute a
+    join pg_class c on c.oid = a.attrelid
+    join pg_namespace n on n.oid = c.relnamespace
+    join pg_type t on t.oid = a.atttypid
+    where n.nspname = 'public'
+      and c.relkind in ('r', 'p')
+      and a.attnum > 0
+      and not a.attisdropped
+  `);
+
+  const foreignKeys = await db.execute<ForeignKey>(sql`
+    select src.relname as child,
+           tgt.relname as parent,
+           (select array_agg(a.attname order by a.attnum)::text[]
+              from pg_attribute a
+             where a.attrelid = src.oid and a.attnum = any (con.conkey)) as columns,
+           (select array_agg(a.attname order by a.attnum)::text[]
+              from pg_attribute a
+             where a.attrelid = tgt.oid and a.attnum = any (con.confkey)) as "parentColumns",
+           (select bool_and(a.attnotnull)
+              from pg_attribute a
+             where a.attrelid = src.oid and a.attnum = any (con.conkey)) as "notNull",
+           (select bool_and(t.typname = 'uuid')
+              from pg_attribute a
+              join pg_type t on t.oid = a.atttypid
+             where a.attrelid = src.oid and a.attnum = any (con.conkey)) as "isUuid"
+    from pg_constraint con
+    join pg_class src on src.oid = con.conrelid
+    join pg_class tgt on tgt.oid = con.confrelid
+    join pg_namespace n on n.oid = src.relnamespace
+    where con.contype = 'f' and n.nspname = 'public'
+  `);
+
+  // ---- 3. ownership. Real only once a table exists that needs a policy. ----------------------
+
+  const ownershipFailures: string[] = [];
+  const ownedNeedingPolicy = tables.filter((t) => {
+    const access = entryFor(t);
+    return t.owner === role?.current_user && access !== undefined && isRlsAccess(access);
+  });
+  for (const t of ownedNeedingPolicy) {
+    if (!t.forced) {
+      ownershipFailures.push(
+        `${t.relname}: is owned by the application role and is not FORCE ROW LEVEL SECURITY, so ` +
+          'the owner bypasses its policies',
+      );
+    }
+  }
+
+  subchecks.push({
+    name: 'table ownership',
+    failures: ownershipFailures,
+    real: ownedNeedingPolicy.length > 0,
+    verdict:
+      ownedNeedingPolicy.length > 0
+        ? `${ownedNeedingPolicy.length} table(s) owned by the application role force RLS`
+        : `${APP_ROLE} owns no table that needs a policy, so there was nothing to check. ADR ` +
+          '0042 named this check as real today; it has never had anything to iterate',
+  });
+
+  // ---- 4. the registry matches the catalogue, both directions. --------------------------------
 
   const catalogueFailures: string[] = [];
+
+  for (const relation of relations.rows) {
+    if ((CLASSIFIABLE_RELKINDS as readonly string[]).includes(relation.relkind)) continue;
+    const what =
+      relation.relkind === 'v'
+        ? 'a view, which runs with its owner rights unless security_invoker is set - and ' +
+          'migrations run as the owner, so it bypasses the policies of every table it reads'
+        : relation.relkind === 'm'
+          ? 'a materialized view, which row-level security never applies to, so its contents are ' +
+            'readable by anyone holding SELECT on it'
+          : `relkind ${relation.relkind}, which TABLE_ACCESS does not model`;
+    catalogueFailures.push(
+      `${relation.relname}: is ${what}. ADR 0050 classifies tables only, so this needs a decision ` +
+        'about how it is scoped rather than a registry entry',
+    );
+  }
+
   for (const [name] of ENTRIES) {
     if (!inDatabase.has(name) && inDatabase.size > 0) {
       catalogueFailures.push(
@@ -240,30 +433,13 @@ const main = async () => {
       );
     }
   }
-  for (const row of publicTables.rows) {
-    const reason = TABLE_ACCESS_BLOCKERS[row.tablename as keyof typeof TABLE_ACCESS_BLOCKERS];
-    if (reason) catalogueFailures.push(`${row.tablename}: migrated while blocked. ${reason}`);
-    else if (!classified.has(row.tablename)) {
+  for (const t of tables) {
+    const reason = TABLE_ACCESS_BLOCKERS[t.root as keyof typeof TABLE_ACCESS_BLOCKERS];
+    if (reason) catalogueFailures.push(`${t.relname}: migrated while blocked. ${reason}`);
+    else if (!entryFor(t)) {
       catalogueFailures.push(
-        `${row.tablename}: exists in the database and is not classified in TABLE_ACCESS`,
-      );
-    }
-  }
-
-  // A table carrying the tenant column and classified as anything else is the original mistake
-  // ADR 0042's inventory existed to catch, and it survives the move to one registry: the column is
-  // the strongest available hint that a table is tenant data, whatever its entry claims.
-  const withWorkspaceId = await db.execute<{ table_name: string }>(sql`
-    select table_name
-    from information_schema.columns
-    where table_schema = 'public' and column_name = 'workspace_id'
-  `);
-  for (const row of withWorkspaceId.rows) {
-    const access = REGISTRY[row.table_name];
-    if (access && access.kind !== 'workspace-rls') {
-      catalogueFailures.push(
-        `${row.table_name}: carries a workspace_id column and is classified ${access.kind}, so ` +
-          'tenant data is protected by something other than the tenancy boundary',
+        `${t.relname}: exists in the database and is not classified in TABLE_ACCESS` +
+          (t.isPartition ? ` (nor is its partition root ${t.root})` : ''),
       );
     }
   }
@@ -271,14 +447,134 @@ const main = async () => {
   subchecks.push({
     name: 'registry to database catalogue',
     failures: catalogueFailures,
+    real: relations.rows.length > 0,
+    verdict:
+      relations.rows.length > 0
+        ? `${relations.rows.length} relation(s) in public, all of them tables, all classified`
+        : 'there is nothing in the public schema yet, so neither direction had anything to iterate',
+  });
+
+  // ---- 5. the tenancy graph. What can reach tenant data, by foreign key. ----------------------
+  //
+  // This replaces a string match on the column name `workspace_id`, which could not see a child
+  // table holding tenant data through its parent - the shape review found leaking. `lead_note`
+  // with a `lead_id` classified itself role-grants, with a plausible reason, and returned every
+  // tenant's rows.
+
+  const graphFailures: string[] = [];
+
+  // (a) a NOT NULL uuid foreign key to workspace(id) means the table is tenant data, whatever its
+  //     column is called and whatever its entry claims.
+  for (const fk of foreignKeys.rows) {
+    if (fk.parent !== TENANT_TABLE) continue;
+    if (fk.parentColumns.length !== 1 || fk.parentColumns[0] !== TENANT_KEY) continue;
+    if (!fk.notNull || !fk.isUuid || fk.columns.length !== 1) continue;
+    const access = REGISTRY[fk.child];
+    if (!access) continue;
+    if (access.kind !== 'workspace-rls') {
+      graphFailures.push(
+        `${fk.child}: has a NOT NULL uuid foreign key ${fk.columns[0]} to ` +
+          `${TENANT_TABLE}(${TENANT_KEY}) and is classified ${access.kind}. That is tenant data ` +
+          'protected by something other than the tenancy boundary',
+      );
+    } else if (access.scopeColumn !== fk.columns[0]) {
+      graphFailures.push(
+        `${fk.child}: scopes by ${access.scopeColumn} while its tenant foreign key is ` +
+          `${fk.columns[0]}. A policy on the wrong column is canonical in shape and isolates by ` +
+          'the wrong axis',
+      );
+    }
+  }
+
+  // (b) a role-grants table must not be able to reach tenant data at all. Transitive, because the
+  //     leaking shape was two hops from a policy.
+  const parentsOf = new Map<string, string[]>();
+  for (const fk of foreignKeys.rows) {
+    parentsOf.set(fk.child, [...(parentsOf.get(fk.child) ?? []), fk.parent]);
+  }
+  const pathToTenantData = (from: string): string[] | null => {
+    const seen = new Set<string>([from]);
+    const queue: { table: string; path: string[] }[] = [{ table: from, path: [from] }];
+    while (queue.length > 0) {
+      const { table, path } = queue.shift()!;
+      for (const parent of parentsOf.get(table) ?? []) {
+        if (seen.has(parent)) continue;
+        seen.add(parent);
+        const access = REGISTRY[parent];
+        if (parent === TENANT_TABLE || (access && access.kind === 'workspace-rls')) {
+          return [...path, parent];
+        }
+        queue.push({ table: parent, path: [...path, parent] });
+      }
+    }
+    return null;
+  };
+
+  for (const [name, access] of ENTRIES) {
+    if (access.kind !== 'role-grants') continue;
+    if (!inDatabase.has(name)) continue;
+    const path = pathToTenantData(name);
+    if (path) {
+      graphFailures.push(
+        `${name}: is classified role-grants and reaches tenant data by foreign key ` +
+          `(${path.join(' -> ')}). Grants control operations, never row visibility, so every row ` +
+          'of it is readable by the application whatever its reason says. It needs a policy of ' +
+          'its own, or a tenant column to scope by',
+      );
+    }
+  }
+
+  // (c) a row-scoped table's scope column has to be what it claims to be.
+  for (const [name, access] of ENTRIES) {
+    if (!isRlsAccess(access)) continue;
+    if (!inDatabase.has(name)) continue;
+    const column = columns.rows.find((c) => c.relname === name && c.column === access.scopeColumn);
+    if (!column) {
+      graphFailures.push(`${name}: scopeColumn ${access.scopeColumn} does not exist on the table`);
+      continue;
+    }
+    if (column.type !== 'uuid') {
+      graphFailures.push(
+        `${name}: scopeColumn ${access.scopeColumn} is ${column.type}, not uuid, so the policy's ` +
+          'uuid cast is comparing something else',
+      );
+    }
+    if (!column.notNull) {
+      graphFailures.push(
+        `${name}: scopeColumn ${access.scopeColumn} is nullable. A null never equals the ` +
+          'context, so such a row is unreachable rather than protected',
+      );
+    }
+    if (access.kind === 'workspace-rls') {
+      const isTenantKeyItself = name === TENANT_TABLE && access.scopeColumn === TENANT_KEY;
+      const hasTenantFk = foreignKeys.rows.some(
+        (fk) =>
+          fk.child === name &&
+          fk.parent === TENANT_TABLE &&
+          fk.columns.length === 1 &&
+          fk.columns[0] === access.scopeColumn,
+      );
+      if (!isTenantKeyItself && !hasTenantFk) {
+        graphFailures.push(
+          `${name}: scopeColumn ${access.scopeColumn} neither references ` +
+            `${TENANT_TABLE}(${TENANT_KEY}) nor is it, so nothing ties the value the policy ` +
+            'compares to a real workspace',
+        );
+      }
+    }
+  }
+
+  subchecks.push({
+    name: 'tenancy graph',
+    failures: graphFailures,
     real: inDatabase.size > 0,
     verdict:
       inDatabase.size > 0
-        ? `${inDatabase.size} public table(s) matched against the registry in both directions`
-        : 'there are no public tables yet, so neither direction had anything to iterate',
+        ? `${foreignKeys.rows.length} foreign key(s) walked; no grant-only table reaches tenant data`
+        : 'there are no tables yet, so there is no graph to walk',
   });
 
-  // ---- 4 and 5. the policy on each row-level-security table is exactly the canonical one. ----
+  // ---- 6 and 7. the policy on each row-scoped table is exactly the canonical one. -------------
 
   const policies = await db.execute<{
     tablename: string;
@@ -296,8 +592,8 @@ const main = async () => {
            pg_get_expr(p.polqual, p.polrelid) as qual,
            pg_get_expr(p.polwithcheck, p.polrelid) as withcheck,
            -- ::text[] is load-bearing. array_agg over pg_roles.rolname yields name[], which
-           -- node-postgres has no parser for, so the driver hands back the raw string '{convert_app}'
-           -- and spreading it gives one entry per character. Caught by running this.
+           -- node-postgres has no parser for, so the driver hands back the raw string
+           -- '{convert_app}' and spreading it gives one entry per character.
            coalesce((
              select array_agg(case when o = 0 then 'PUBLIC' else r.rolname end)::text[]
              from unnest(p.polroles) as o
@@ -310,68 +606,69 @@ const main = async () => {
   `);
 
   for (const kind of RLS_KINDS) {
-    const present = rlsEntries.filter(
-      ([name, access]) => access.kind === kind && inDatabase.has(name),
-    );
+    const present = tables.filter((t) => {
+      const access = entryFor(t);
+      return access !== undefined && access.kind === kind;
+    });
     const failures: string[] = [];
 
-    if (present.length > 0) {
-      const template = await deriveCanonicalQual(db, kind);
+    for (const table of present) {
+      const access = entryFor(table);
+      if (!access || !isRlsAccess(access)) continue;
+      const name = table.relname;
+      const label = table.isPartition ? `${name} (partition of ${table.root})` : name;
 
-      for (const [name, access] of present) {
-        const table = inDatabase.get(name);
-        if (!table?.rowsecurity) failures.push(`${name}: row-level security is not enabled`);
-        if (!table?.forced) {
-          failures.push(
-            `${name}: is not FORCE ROW LEVEL SECURITY, so a future ownership change reopens it`,
-          );
-        }
+      if (!table.rowsecurity) failures.push(`${label}: row-level security is not enabled`);
+      if (!table.forced) {
+        failures.push(
+          `${label}: is not FORCE ROW LEVEL SECURITY, so a future ownership change reopens it`,
+        );
+      }
 
-        const mine = policies.rows.filter((p) => p.tablename === name);
-        const permissive = mine.filter((p) => p.permissive);
-        if (permissive.length === 0) {
-          failures.push(`${name}: row-level security is enabled but no permissive policy exists`);
-          continue;
-        }
-        if (permissive.length > 1) {
-          failures.push(
-            `${name}: has ${permissive.length} permissive policies (${permissive
-              .map((p) => p.polname)
-              .join(', ')}). Permissive policies combine with OR, so a second one can only widen ` +
-              'what is visible. Restrictive policies are fine; a second permissive one is not',
-          );
-          continue;
-        }
+      const mine = policies.rows.filter((p) => p.tablename === name);
+      const permissive = mine.filter((p) => p.permissive);
+      if (permissive.length === 0) {
+        failures.push(`${label}: row-level security is enabled but no permissive policy exists`);
+        continue;
+      }
+      if (permissive.length > 1) {
+        failures.push(
+          `${label}: has ${permissive.length} permissive policies (${permissive
+            .map((p) => p.polname)
+            .join(', ')}). Permissive policies combine with OR, so a second one can only widen ` +
+            'what is visible. Restrictive policies are fine; a second permissive one is not',
+        );
+        continue;
+      }
 
-        const policy = permissive[0]!;
-        if (policy.cmd !== '*') {
-          failures.push(
-            `${name}: policy ${policy.polname} is not FOR ALL, so writes are governed by ` +
-              'something other than the expression that governs reads',
-          );
-        }
-        if (policy.withcheck !== null) {
-          failures.push(
-            `${name}: policy ${policy.polname} sets WITH CHECK. On a FOR ALL policy it must be ` +
-              'omitted, so USING governs both visible and newly added rows and there is one ' +
-              'expression to verify rather than two that can disagree',
-          );
-        }
-        const roles = [...policy.roles].sort();
-        if (roles.length !== 1 || roles[0] !== APP_ROLE) {
-          failures.push(
-            `${name}: policy ${policy.polname} applies to [${roles.join(', ')}] rather than ` +
-              `exactly ${APP_ROLE}`,
-          );
-        }
-        const expected = template.replaceAll('scope_id', access.scopeColumn);
-        if (policy.qual !== expected) {
-          failures.push(
-            `${name}: policy ${policy.polname} is not the canonical expression.\n` +
-              `      expected: ${expected}\n` +
-              `      actual:   ${policy.qual}`,
-          );
-        }
+      const policy = permissive[0]!;
+      if (policy.cmd !== '*') {
+        failures.push(
+          `${label}: policy ${policy.polname} is not FOR ALL, so writes are governed by ` +
+            'something other than the expression that governs reads',
+        );
+      }
+      if (policy.withcheck !== null) {
+        failures.push(
+          `${label}: policy ${policy.polname} sets WITH CHECK. On a FOR ALL policy it must be ` +
+            'omitted, so USING governs both visible and newly added rows and there is one ' +
+            'expression to verify rather than two that can disagree',
+        );
+      }
+      const roles = [...policy.roles].sort();
+      if (roles.length !== 1 || roles[0] !== APP_ROLE) {
+        failures.push(
+          `${label}: policy ${policy.polname} applies to [${roles.join(', ')}] rather than ` +
+            `exactly ${APP_ROLE}`,
+        );
+      }
+      const expected = await deriveCanonicalQual(db, kind, access.scopeColumn);
+      if (policy.qual !== expected) {
+        failures.push(
+          `${label}: policy ${policy.polname} is not the canonical expression.\n` +
+            `      expected: ${expected}\n` +
+            `      actual:   ${policy.qual}`,
+        );
       }
     }
 
@@ -386,65 +683,107 @@ const main = async () => {
     });
   }
 
-  // ---- 6. grant-only tables hold exactly the privileges they declare. ------------------------
+  // ---- 8. every table holds exactly the privileges its entry declares. ------------------------
+  //
+  // Read with has_table_privilege and has_any_column_privilege rather than
+  // information_schema.role_table_grants. That view shows only table-level grants, and only where
+  // the grantor or grantee is a currently enabled role - so it misses column grants and anything
+  // inherited through a group role, both of which are real access.
 
-  const grantEntries = ENTRIES.filter(
-    (entry): entry is [string, TableAccess & { kind: 'role-grants' }] =>
-      entry[1].kind === 'role-grants',
-  );
-  const presentGrants = grantEntries.filter(([name]) => inDatabase.has(name));
   const grantFailures: string[] = [];
-
-  if (presentGrants.length > 0) {
-    const grants = await db.execute<{
-      table_name: string;
-      grantee: string;
-      privilege_type: string;
+  if (inDatabase.size > 0) {
+    const effective = await db.execute<{
+      relname: string;
+      privilege: string;
+      on_table: boolean;
+      on_column: boolean;
+      public_on_table: boolean;
     }>(sql`
-      select table_name, grantee, privilege_type
-      from information_schema.role_table_grants
-      where table_schema = 'public'
+      select c.relname,
+             p.priv as privilege,
+             has_table_privilege(${APP_ROLE}, c.oid, p.priv) as on_table,
+             case
+               when p.priv in ('SELECT', 'INSERT', 'UPDATE', 'REFERENCES')
+                 then has_any_column_privilege(${APP_ROLE}, c.oid, p.priv)
+               else false
+             end as on_column,
+             exists (
+               select 1
+               from aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) as acl
+               where acl.grantee = 0 and acl.privilege_type = p.priv
+             ) as public_on_table
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+      cross join unnest(array[
+        'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'
+      ]) as p(priv)
+      where n.nspname = 'public' and c.relkind in ('r', 'p') and c.relname not like 'rls\_%'
     `);
 
-    for (const [name, access] of presentGrants) {
-      const rows = grants.rows.filter((g) => g.table_name === name);
+    for (const table of tables) {
+      const access = entryFor(table);
+      if (!access) continue; // already reported as unclassified by check 4
+      const name = table.relname;
+      const label = table.isPartition ? `${name} (partition of ${table.root})` : name;
+      const rows = effective.rows.filter((r) => r.relname === name);
 
       for (const row of rows) {
-        if (row.grantee === 'PUBLIC') {
+        if ((FORBIDDEN_PRIVILEGES as readonly string[]).includes(row.privilege)) {
+          if (row.on_table || row.on_column) {
+            grantFailures.push(
+              `${label}: ${APP_ROLE} holds ${row.privilege}. Row-level security does not govern ` +
+                'it - TRUNCATE never visits a row, REFERENCES probes for rows a policy hides, ' +
+                'TRIGGER runs code - so the grant is the only control and it must not exist',
+            );
+          }
+          continue;
+        }
+        if (row.public_on_table) {
           grantFailures.push(
-            `${name}: ${row.privilege_type} is granted to PUBLIC, which every role holds`,
+            `${label}: ${row.privilege} is granted to PUBLIC, which every role holds`,
           );
         }
-        // Only what the application role or PUBLIC holds. The owner holds TRUNCATE, REFERENCES and
-        // TRIGGER inherently - they come with owning the table, not from a grant - so flagging them
-        // would fail every table on a rule about a role that runs migrations anyway.
-        const reachesApp = row.grantee === APP_ROLE || row.grantee === 'PUBLIC';
-        if (
-          reachesApp &&
-          (FORBIDDEN_PRIVILEGES as readonly string[]).includes(row.privilege_type)
-        ) {
+        if (row.on_column && !row.on_table) {
           grantFailures.push(
-            `${name}: ${row.privilege_type} is granted to ${row.grantee}. Row-level security does ` +
-              'not govern it - TRUNCATE never visits a row, REFERENCES probes for rows a policy ' +
-              'hides, TRIGGER runs code - so the grant is the only control',
+            `${label}: ${APP_ROLE} holds ${row.privilege} on a column but not on the table. A ` +
+              'column grant is real access that information_schema.role_table_grants does not ' +
+              'show, and TABLE_ACCESS does not model it - grant at table level or not at all',
           );
         }
       }
 
-      const actual = [
-        ...new Set(rows.filter((g) => g.grantee === APP_ROLE).map((g) => g.privilege_type)),
-      ].sort();
+      const held = rows
+        .filter(
+          (r) =>
+            (r.on_table || r.on_column) &&
+            !(FORBIDDEN_PRIVILEGES as readonly string[]).includes(r.privilege),
+        )
+        .map((r) => r.privilege)
+        .sort();
       const declared = [...access.appPrivileges].sort();
-      if (actual.join(',') !== declared.join(',')) {
+      if (table.isPartition) {
+        // A partition is held to "no more than its root declares", not to an exact match. Grants on
+        // a partitioned parent do not reach its partitions for direct access, so requiring the
+        // parent's set on every partition would push a migration into granting more than the
+        // application needs - the opposite of the point. Holding *extra* is still a finding.
+        const extra = held.filter((p) => !declared.includes(p as never));
+        if (extra.length > 0) {
+          grantFailures.push(
+            `${label}: ${APP_ROLE} effectively holds [${extra.join(', ')}] which its partition ` +
+              `root does not declare (root declares [${declared.join(', ')}])`,
+          );
+        }
+      } else if (held.join(',') !== declared.join(',')) {
         grantFailures.push(
-          `${name}: ${APP_ROLE} holds [${actual.join(', ')}] where the registry declares ` +
-            `[${declared.join(', ')}]`,
+          `${label}: ${APP_ROLE} effectively holds [${held.join(', ')}] where the registry ` +
+            `declares [${declared.join(', ')}]. Effective means direct, inherited through a ` +
+            'group role, granted to PUBLIC, or granted on a single column',
         );
       }
 
-      if (inDatabase.get(name)?.rowsecurity) {
+      if (access.kind === 'role-grants' && table.rowsecurity) {
         grantFailures.push(
-          `${name}: is classified role-grants and has row-level security enabled. Grants control ` +
+          `${label}: is classified role-grants and has row-level security enabled. Grants control ` +
             'operations, never row visibility - a table needing row scoping cannot be role-grants',
         );
       }
@@ -452,16 +791,17 @@ const main = async () => {
   }
 
   subchecks.push({
-    name: 'role-grants privileges',
+    name: 'effective privileges',
     failures: grantFailures,
-    real: presentGrants.length > 0,
+    real: inDatabase.size > 0,
     verdict:
-      presentGrants.length > 0
-        ? `${presentGrants.length} grant-only table(s) hold exactly their declared privileges`
-        : `no grant-only table exists in the database yet (${grantEntries.length} declared), so no privilege was compared`,
+      inDatabase.size > 0
+        ? `${inDatabase.size} table(s) hold exactly their declared privileges, with no column ` +
+          'grant, no PUBLIC grant and none of TRUNCATE, REFERENCES or TRIGGER'
+        : `there are no public tables yet (${ENTRIES.length} classified), so no privilege was compared`,
   });
 
-  // ---- 7. does isolation actually hold? Behavioural, on a fixture table. ---------------------
+  // ---- 9. does isolation actually hold? Behavioural, on a fixture table. ---------------------
   //
   // The checks above are necessary and not sufficient: they prove the role *could* be subject to
   // policy and that a policy reads as intended, not that a cross-tenant read returns nothing. This
@@ -487,10 +827,8 @@ const main = async () => {
     `);
     await db.execute(sql`alter table rls_probe enable row level security`);
     await db.execute(sql`alter table rls_probe force row level security`);
-    // Written by canonicalPolicySql so the probe proves the same policy a migration would write,
-    // rather than a hand-typed lookalike. The nullif inside it is load-bearing: without it an empty
-    // context raises invalid input syntax for uuid instead of returning no rows, so a forgotten
-    // context becomes a 500 rather than an empty list. Verified against Postgres 16 on 21 Aug 2026.
+    // Written by canonicalPolicySql so the probe proves the same policy text a migration has to
+    // reproduce, rather than a hand-typed lookalike.
     await db.execute(sql.raw(canonicalPolicySql('rls_probe', 'workspace-rls', 'workspace_id')));
     await db.execute(sql`grant select, insert, update, delete on rls_probe to convert_app`);
     await db.execute(sql`grant usage, select on sequence rls_probe_id_seq to convert_app`);
@@ -579,11 +917,14 @@ const main = async () => {
     process.exit(1);
   }
 
-  console.warn('RLS ok. What each check proved, and what it did not:\n');
+  const real = subchecks.filter((check) => check.real).length;
+  console.warn(
+    `RLS ok. ${real} of ${subchecks.length} checks proved something. What each did and did not:\n`,
+  );
   for (const check of subchecks) {
     console.warn(`  [${check.real ? 'real   ' : 'vacuous'}] ${check.name}: ${check.verdict}`);
   }
-  if (subchecks.some((check) => !check.real)) {
+  if (real < subchecks.length) {
     console.warn(
       '\nThe vacuous checks above are not passes. They report that the schema they exist to check ' +
         'does not exist yet, and they become real with the first migration (ADR 0048).',

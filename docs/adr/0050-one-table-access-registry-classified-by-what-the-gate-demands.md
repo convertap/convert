@@ -46,8 +46,8 @@ preserve the vocabulary this record exists to retire.
 
 ```ts
 type TableAccess =
-  | { kind: 'workspace-rls'; scopeColumn: string }
-  | { kind: 'user-rls'; scopeColumn: string }
+  | { kind: 'workspace-rls'; scopeColumn: string; appPrivileges: readonly TablePrivilege[] }
+  | { kind: 'user-rls'; scopeColumn: string; appPrivileges: readonly TablePrivilege[] }
   | {
       kind: 'role-grants';
       appPrivileges: readonly TablePrivilege[];
@@ -59,15 +59,43 @@ A map rather than a set of lists, because membership in exactly one class stops 
 check and becomes one the type cannot express otherwise. The cross-list loop that 0042 needed —
 which only ever checked one of its two directions — disappears rather than getting fixed.
 
+**Every class declares `appPrivileges`, including the row-scoped ones.** The first draft gave that
+field to `role-grants` alone, on the reasoning that a tenant table's protection is its policy. It is
+not: a policy governs which rows are visible and says nothing about `TRUNCATE`, which never visits a
+row. So the registry could not express what the application may do to the tables holding all the
+tenant data, and invariant I6 — `activity` and `consent` withhold `UPDATE` and `DELETE` — was not
+representable in the structure meant to be the single answer to that question.
+
 **`role-grants` controls permitted operations, never row visibility. A table requiring row-scoped
 access cannot use `role-grants`.** This is the rule that replaces 0047's `verification_attempt`
 paragraph, and it is deliberately phrased as a prohibition, because the failure it prevents is a
 reviewer reading "no RLS, narrow grant instead" and believing rows were narrowed.
 
+**That prohibition is held by the foreign-key graph, not by a column name.** A `role-grants` table
+with any transitive foreign-key path to a row-scoped table fails, and a NOT NULL `uuid` foreign key
+to `workspace(id)` forces `workspace-rls` on the table holding it, whatever that column is called.
+The first draft looked for a column named `workspace_id`, which review defeated in one move: a child
+table with a `lead_id` and no tenant column of its own classified itself `role-grants`, carried a
+`reason` a reviewer would accept, and returned every tenant's rows. **A `reason` is not a defence** —
+it is the sentence a reviewer reads instead of checking, so the gate does not rely on it being true.
+
 **The class names what is enforced, not what the table is about.** "Identity" remains a domain
 concept, and it belongs in the glossary, where nothing load-bearing rests on it.
 
-**One canonical policy per row-level-security table**, and the gate demands exactly this shape:
+**Only tables and partitioned tables are classifiable. Views and materialized views fail the build.**
+A view runs with its owner's rights unless it sets `security_invoker`, and migrations run as the
+owner, so a view over a tenant table bypasses that table's policy; row-level security never applies
+to reading a materialized view at all. Both were demonstrated returning a full tenant table to the
+application role. Neither gets a registry class here, because how they should be scoped is a decision
+nobody has made, and refusing them is the honest placeholder for it.
+
+**A partition inherits its root's entry** rather than needing one of its own — a monthly-partitioned
+table would otherwise need a registry entry per month — and is then held to the same policy rules,
+because reading a partition directly applies that partition's policies rather than its parent's. Its
+privileges are held to a subset of the root's rather than an exact match, since grants on a parent do
+not reach its partitions and demanding them would force over-granting.
+
+**One canonical policy per row-scoped table**, and the gate demands exactly this shape:
 
 ```sql
 CREATE POLICY workspace_scope
@@ -86,6 +114,12 @@ Postgres uses the `USING` expression for both visible rows and newly added ones 
 omitted on an `ALL` policy, so one expression governs read and write and there is one thing to verify
 rather than two that can disagree.
 
+**`scopeColumn` is checked against the catalogue, not taken on trust.** It must exist, be a NOT NULL
+`uuid`, and either reference `workspace(id)` or be it. A nullable scope column is worse than it
+looks: a null never equals the context, so such a row is unreachable rather than protected. And a
+plausible wrong answer — `created_by_id` on a table that also carries `workspace_id` — produces a
+policy that is canonical in shape and isolates by the wrong axis, which review demonstrated passing.
+
 **A second permissive policy on the same table fails the gate, whatever it says.** Permissive
 policies combine with `OR`, so a second one can only widen what is visible, and widening is invisible
 in a diff that adds a file. Restrictive policies are permitted and ignored: they combine with `AND`
@@ -97,25 +131,34 @@ context raises `invalid input syntax for uuid` instead of returning no rows, so 
 becomes a 500 rather than an empty list. ADR 0042 put this in bold and nothing enforced it outside
 the fixture table.
 
-**`role-grants` entries declare the exact privileges `convert_app` holds, and a non-empty reason.**
-The gate compares the declaration against `information_schema.role_table_grants` in both directions,
-rejects any grant to `PUBLIC`, and rejects `TRUNCATE`, `REFERENCES` and `TRIGGER` outright — none of
-which row-level security governs, so a policy is no defence against them.
+**Privileges are compared as *effective* access, on every class.** The gate reads
+`has_table_privilege` and `has_any_column_privilege` rather than
+`information_schema.role_table_grants`, which shows only table-level grants and only where the
+grantor or grantee is a currently enabled role. It therefore sees a privilege reaching `convert_app`
+through a group role, and a grant on a single column — `grant select (name) on workspace to
+convert_app` was invisible to the first draft while the entry declared no privileges at all. Any
+grant to `PUBLIC` fails, and `TRUNCATE`, `REFERENCES` and `TRIGGER` fail on **every** class, not just
+grant-only tables: row-level security governs none of the three, so a perfect policy is no defence,
+and `TRUNCATE` on a tenant table destroys every tenant's rows.
 
-**The bootstrap stops granting table privileges, and each migration grants what its entry declares.**
+**The bootstrap stops granting table privileges, and revokes the default it used to install.**
 `bootstrap.sql` held `grant select, insert, update, delete on all tables in schema public` plus an
-`alter default privileges` doing the same for every table a later migration creates. The reasoning
-was that a new tenant table should not be silently unreadable by the application. It has to go: a
-blanket default grant makes every future table fully readable and writable by `convert_app` whatever
-its registry entry says, so the registry would describe the intent while the database did something
-else — and it would have failed `workspace`'s own entry, which declares no privileges, on the first
-migration. Silently readable is the worse of the two failures. Sequence grants stay, and should stay
-unused, because ADR 0043 makes the ULID the primary key and no table needs a serial.
+`alter default privileges` doing the same for every table a later migration creates. A blanket
+default grant makes every future table fully readable and writable by `convert_app` whatever its
+registry entry says, so the registry would describe the intent while the database did something else.
+Deleting the statement is not enough: a `pg_default_acl` entry survives the script that created it,
+so the bootstrap now issues the matching `REVOKE`, which is idempotent, and G7 asserts the catalogue
+is clean rather than trusting that the file ran. Sequence grants stay, and should stay unused,
+because ADR 0043 makes the ULID the primary key and no table needs a serial.
 
 **The registry is an inventory of *declared* tables, updated in the same change as the migration that
-creates the table.** It ships holding one entry, `workspace`, with no privileges granted, whose
-reason records that direct application access waits until workspace discovery through membership is
-designed. That entry is the temporary exception to the same-change rule: `workspace` was declared in
+creates the table.** It ships holding one entry: `workspace`, as `workspace-rls` scoped by its own
+`id`, with no privileges. It is a row-scoped table — the one row the application may see is exactly
+the one `app.current_workspace` names — and classifying it `role-grants` because nothing reads it yet
+would describe the present rather than what must be true, and would put the tenant table itself into
+the first migration with no policy on it. Adding one later is an `ALTER` against populated data. It
+holds no privileges because nothing reads it, and how a workspace is discovered through membership is
+still undecided. That entry is the one exception to the same-change rule: `workspace` was declared in
 Drizzle long before there was a migration to pair it with.
 
 **Two names are reserved rather than classified.** `TABLE_ACCESS_BLOCKERS` holds `user` and
@@ -133,12 +176,26 @@ migration to compare against. The `nullif` form and the single-permissive-policy
 machine-held, where both were prose. And the impossible grant mechanism is out of the accepted set
 before anything was built on it, which is the cheapest moment to remove it.
 
-**Negative / cost:** the structural policy check reads `pg_get_expr(polqual, polrelid)` and compares
-it against a canonical string, which is sensitive to how Postgres chooses to print an expression.
-That is a real maintenance cost, and it is accepted because the alternative — a substring match for
-`nullif` — passes `true OR workspace_id = nullif(...)`, and a check a hostile expression passes is
-not a check. If a Postgres upgrade changes the printed form, G7 fails loudly on a policy that is in
-fact correct, and the fix is to re-derive the canonical string, not to loosen the match.
+**Negative / cost:** the policy comparison is exact against `pg_get_expr` output, so it depends on
+how Postgres chooses to print an expression. That cost is paid by deriving the expected string at
+runtime, from a policy the script writes itself on the server being checked, rather than pinning a
+literal - a printing change moves both sides together. What remains is that any *legitimate*
+variation in a policy is a failure: there is one accepted spelling and a migration has to reproduce
+it. That is deliberate, because the alternative is a substring match, and a check that
+`true or workspace_id = nullif(...)` passes is not a check.
+
+Reading privileges with `has_table_privilege` rather than the information schema means the gate sees
+effective access - direct, inherited through a group role, `PUBLIC`, column-level - and so fails on
+grants a reviewer might call harmless. A table whose entry declares `SELECT` and which also holds it
+through a group role is a finding, because the registry is meant to be the single answer to what the
+application may do to that table.
+
+Refusing views and materialized views outright is the bluntest decision in this record. It means the
+first person who needs one hits a red build with no registry entry available to them, and has to
+write an ADR before proceeding. That is the intended cost: both were demonstrated leaking a tenant
+table in full, a view because it runs with its owner's rights unless `security_invoker` is set and
+migrations run as the owner, a materialized view because row-level security never applies to reading
+one at all.
 
 Two structures instead of one is a cost paid deliberately. `TABLE_ACCESS_BLOCKERS` could have been a
 fourth class, and was not, because a class whose only assertion is "nothing is asserted" is a vacuous
@@ -174,60 +231,86 @@ replaces is a table the application can read every row of, which produces no err
 
 ## Enforcement
 
-`packages/infra/scripts/assert-rls.ts` (G7, `assert:rls`) reads the registry and reports five
-subchecks separately, because they become real at different moments and a single summary line would
-imply the vacuous ones were proven:
+`packages/infra/scripts/assert-rls.ts` (G7, `assert:rls`) reads the registry and reports **nine**
+subchecks separately, each tagged real or vacuous, because they become real at different moments and
+one verdict would let the vacuous ones pass for proven (ADR 0048). **Three are real with no
+migrations. Six are vacuous and say so.**
 
-1. **Declared schema to registry — real today, one table.** Drizzle table declarations are
-   enumerated from `schema.ts` by `is(value, PgTable)` rather than a hand-kept list, so a table joins
-   the check by existing. A declared table in neither `TABLE_ACCESS` nor `TABLE_ACCESS_BLOCKERS`
-   fails; a name in both fails; a blocked table that is declared fails with its recorded reason.
-   `workspace` is checked by this today.
-2. **Registry to database catalogue — vacuous until the first migration.** There are no public
-   tables, so the loop has nothing to iterate. It is the direction ADR 0042 admitted it never
-   checked, and it becomes real with CV-12.
-3. **`workspace-rls` assertions — vacuous, no such table exists.** Per table: RLS enabled and
-   forced, exactly one permissive policy, `polcmd = '*'`, `polwithcheck` null, `polroles` exactly
-   `convert_app`, and `pg_get_expr(polqual, polrelid)` equal to the canonical expression for the
-   declared `scopeColumn` and `app.current_workspace`.
-4. **`user-rls` assertions — vacuous, `session` does not exist.** The same checks against
-   `app.current_user`.
-5. **`role-grants` assertions — vacuous until a migration exists.** Actual `convert_app` privileges
-   equal to `appPrivileges` in both directions, no `PUBLIC` grant, no `TRUNCATE`, `REFERENCES` or
-   `TRIGGER`, and no RLS enabled on a table that chose grant-only control. A blank `reason` fails,
-   because TypeScript's `string` admits `''`.
+Real today:
 
-**Verified by making it fail**, against Postgres 16.13 on 21 August 2026, because five of the six
-subchecks pass vacuously against the real registry and a vacuous pass proves nothing. A fixture
-registry and hand-written SQL put fourteen defects into one database at once — a non-canonical
-expression with the `nullif` removed, a second permissive policy, a policy granted to `PUBLIC`, a
-policy with `WITH CHECK` set, a table with `FORCE` removed, grants contradicting the declaration,
-`TRUNCATE` granted to the application role, a `PUBLIC` grant, row-level security on a `role-grants`
-table, a `workspace_id` column on one, an unclassified table, a migrated blocked table, a registry
-entry with no table, and a blank reason — and each produced its own named failure. The hostile case
-this record rejects substring matching over was tested directly: a policy reading
-`true or workspace_id = nullif(...)` fails on the expression comparison.
+1. **Declared schema to registry.** Drizzle tables are enumerated from `schema.ts` by
+   `is(value, PgTable)` rather than a hand-kept list, so a table joins the check by existing. A
+   declared table in neither `TABLE_ACCESS` nor `TABLE_ACCESS_BLOCKERS` fails; a name in both fails;
+   a blocked table that is declared fails with its recorded reason; a blank `reason` fails, because
+   TypeScript's `string` admits the empty string; a `scopeColumn` that is not a bare identifier
+   fails, because it reaches `create policy` as text. One table is checked by this today,
+   `workspace`.
+2. **Application role attributes.** `convert_app` is neither superuser nor `BYPASSRLS`, and
+   `pg_default_acl` grants nothing on future tables to it or to `PUBLIC`.
+3. **Cross-tenant isolation**, behaviourally, on a fixture table the script creates and drops: a
+   cross-tenant read returns nothing, an empty context returns nothing, and the owner sees both rows
+   so the empty results mean something.
 
-Running it found two defects in the assertion itself, which is the argument for running it. `array_agg`
-over `pg_roles.rolname` yields `name[]`, which node-postgres has no parser for, so the driver returned
-the string `{convert_app}` and the role comparison spread it into thirteen single characters — fixed
-with `::text[]`. And the forbidden-privilege check flagged the *owner's* `TRUNCATE`, `REFERENCES` and
-`TRIGGER`, which come with owning a table rather than from a grant; it now looks only at what
-`convert_app` or `PUBLIC` holds. Both would have failed CI on the first migration, and neither is
-visible in a type check.
+Vacuous until there is a schema, and each says which:
 
-The role checks and the synthetic cross-tenant isolation probe from ADR 0042 are unchanged and remain
-real today: the probe is behavioural proof on a fixture table this script creates and drops, where
-the catalogue matching above is structural proof about the real schema. Both are needed. The probe
-cannot see a table that does not exist yet, and the catalogue cannot prove a correct-looking policy
-actually excludes a row.
+4. **Table ownership.** No table is owned by `convert_app`, so the FORCE requirement has nothing to
+   iterate. ADR 0042's amended Enforcement section first called this real today. It is not, and that
+   record now says so.
+5. **Registry to catalogue**, both directions, including the direction ADR 0042 admitted it never
+   checked. Any relation in `public` that is not a table or a partitioned table - a view, a
+   materialized view, a foreign table - fails here rather than being ignored.
+6. **Tenancy graph.** A NOT NULL `uuid` foreign key to `workspace(id)` forces `workspace-rls` and
+   forces the policy onto that column; a `role-grants` table with any transitive foreign-key path to
+   tenant data fails; and a row-scoped table's `scopeColumn` must exist, be a NOT NULL `uuid`, and
+   either reference `workspace(id)` or be it.
+7. **`workspace-rls` policies.** Per table and per partition: RLS enabled and forced, exactly one
+   permissive policy, `polcmd` of `*`, `polwithcheck` null, `polroles` exactly `convert_app`, and
+   `pg_get_expr(polqual, polrelid)` equal to the canonical expression derived at runtime.
+8. **`user-rls` policies.** The same, against `app.current_user`.
+9. **Effective privileges.** Read with `has_table_privilege` and `has_any_column_privilege`, so
+   column grants and privileges inherited through a group role are visible. Exact match to
+   `appPrivileges` for a table, subset for a partition, no `PUBLIC` grant, and none of `TRUNCATE`,
+   `REFERENCES` or `TRIGGER` on any class.
 
-**Nothing else in this record is enforced, because nothing else exists.** There is no `session`
-table, no `user` table, no `verification_attempt` table, and no migration. The canonical policy form
-is asserted by code that has never yet had a policy to assert it against — the first migration is
-where subchecks 2 through 5 stop being announcements and start being proof. The vacuous-gate ledger
-in `CLAUDE.md` names which halves of G7 are which.
+**What is deliberately not enforced.** Views and materialized views are refused rather than
+modelled, so the first one anybody needs will fail the build until a decision exists - that is the
+intended outcome, not a gap to route around. The migration owner's own attributes are not asserted:
+if that role is a superuser then `FORCE` is decoration for it, and if it is not, then a data-backfill
+migration against a row-scoped table silently affects zero rows. Which of the two is true on Railway
+cannot be determined from this repository, so it is recorded as an open question rather than assumed.
 
-The two names in `TABLE_ACCESS_BLOCKERS` are what holds this record's central prohibition. Prose in
-an Enforcement section is what ADR 0048 was written about; the blocker list is four lines that fail
-the build.
+**Verified by making it fail**, against Postgres 16.13 on 21 August 2026, twice - the second time
+because the first was not enough.
+
+The first pass injected fourteen defects into one fixture database and confirmed each produced its
+own named failure. Two independent reviews then took the result apart and found six shapes that
+passed all of it, four of them **real, unprotected tables reading green**, and every one is now a
+subcheck above:
+
+- a `role-grants` child table with a foreign key to a `workspace-rls` parent and no tenant column of
+  its own, which returned both tenants' rows with no workspace context set. `role-grants` was
+  policed by looking for a column named `workspace_id`, so the prohibition was defeated by not
+  having the column - the case where the mistake is most tempting and a confident `reason` most
+  plausible.
+- a partitioned parent, `relkind` of `p`, invisible to queries filtering for `r`: a real tenant
+  table with grants and no row-level security, while the gate printed "there are no public tables
+  yet".
+- a view and a materialized view over a tenant table, invisible for the same reason, both readable
+  in full by the application role.
+- `TRUNCATE` and `REFERENCES` granted on a tenant table, because the forbidden-privilege check ran
+  on every class except the two that hold tenant data.
+- `grant select (name) on workspace to convert_app`, invisible to
+  `information_schema.role_table_grants`, which shows neither column grants nor group inheritance.
+- a `scopeColumn` naming a column that is not the tenant key, producing a policy canonical in shape
+  that isolates by the wrong axis.
+
+Running the first version also exposed two defects in the assertion code that no type check could
+see: `array_agg` over `pg_roles.rolname` yields `name[]`, which node-postgres cannot parse, so the
+role comparison read the string it was handed one character at a time; and the forbidden-privilege
+check flagged the table owner's inherent `TRUNCATE`, `REFERENCES` and `TRIGGER`, which come with
+ownership rather than from a grant.
+
+The lesson worth keeping is not any individual hole. It is that the gate was verified fourteen ways
+by the person who wrote it and still had four, because an author tests the failures they can
+imagine. Independent review found all four, and two reviewers given different instructions found
+different ones.

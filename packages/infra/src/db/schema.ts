@@ -28,10 +28,14 @@ import {
  *     table missing from that registry fails G7, which is the point: forgetting to protect a table
  *     and forgetting to classify it are now the same mistake
  *   - workspace_id not null, referencing workspace
- *   - ENABLE plus FORCE ROW LEVEL SECURITY, and exactly one permissive policy, written by
- *     `canonicalPolicySql` so the migration and the gate share one definition (ADR 0002, ADR 0050,
- *     invariant I1). A second permissive policy fails the build: they combine with OR, so a second
- *     one can only widen what is visible
+ *   - ENABLE plus FORCE ROW LEVEL SECURITY, and exactly one permissive policy, whose text must
+ *     match what `canonicalPolicySql` produces (ADR 0002, ADR 0050, invariant I1). A migration is a
+ *     .sql file and cannot call that function, so nothing *prevents* drift - G7 fails on it. A
+ *     second permissive policy fails the build too: they combine with OR, so a second one can only
+ *     widen what is visible
+ *   - grants matching the entry's `appPrivileges` exactly. The bootstrap no longer grants anything
+ *     on tables, so a migration that forgets them produces a table the application cannot read -
+ *     which is the intended direction of failure
  *   - a ULID primary key in a `uuid` column, supplied by the application, no default
  *     (ADR 0043, invariant I12)
  *   - for activity and consent, revoked UPDATE and DELETE (ADR 0009, invariant I6)

@@ -55,6 +55,17 @@ grant usage on schema public to convert_app;
 -- compares the two in both directions. A table nobody granted anything on fails loudly
 -- at its first query, which is a better failure than one nobody notices.
 
+-- Deleting the statement is not the same as undoing it. Any database where an earlier
+-- bootstrap ran still carries the pg_default_acl entry granting CRUD on every future
+-- table, and a catalogue entry survives the script that created it - so the first
+-- migration there would still hand convert_app blanket access whatever TABLE_ACCESS says.
+-- Revoking is the only thing that removes it, the REVOKE has to mirror the original GRANT
+-- exactly to match, and this is idempotent: revoking a default privilege that was never
+-- granted is a no-op. G7 asserts pg_default_acl is clean afterwards, because this file
+-- running is not evidence that it did.
+alter default privileges in schema public
+  revoke select, insert, update, delete on tables from convert_app;
+
 -- Sequences stay, and should stay unused: ADR 0043 makes the ULID the primary key, so no
 -- table needs a serial. The grant costs nothing while there are none and is one less
 -- thing to remember if a future table has a genuine reason for one.

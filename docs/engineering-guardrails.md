@@ -98,7 +98,9 @@ Two kinds. A machine gate blocks the merge; a human gate is a checklist line som
 
 G6 and G7 are the two most easily skipped and the two that matter most. G6 turns the architecture into tests that fail when someone contradicts it. G7 is the difference between multi-tenancy and a data breach with a plausible-looking query.
 
-G7 reports six subchecks separately rather than one verdict, because they become real at different moments and a summary line would let the vacuous ones read as proven (ADR 0048). Two are real today — the application role's attributes, and every table declared in `schema.ts` appearing in `TABLE_ACCESS` — and the four that need a public table say so in their own line. `TABLE_ACCESS` (ADR 0050) replaced `TENANT_TABLES` and `NON_TENANT_TABLES`, which classified by whether a table carried a `workspace_id` column and so had nothing to say about a table protected some other way.
+G7 reports nine subchecks separately rather than one verdict, because they become real at different moments and a summary line would let the vacuous ones read as proven (ADR 0048). **Three are real today**: the application role's attributes, every table declared in `schema.ts` appearing in `TABLE_ACCESS`, and the behavioural cross-tenant probe on a fixture table. The other six need a public table and each says so in its own line. `TABLE_ACCESS` (ADR 0050) replaced `TENANT_TABLES` and `NON_TENANT_TABLES`, which classified by whether a table carried a `workspace_id` column and so had nothing to say about a table protected some other way.
+
+Views and materialized views fail G7 rather than being classified: a view runs with its owner's rights unless it sets `security_invoker` and migrations run as the owner, and row-level security never applies to reading a materialized view. Adding either needs an ADR, not a registry entry.
 
 CI jobs are written so they pass on an empty repository and tighten automatically as the corresponding code lands. A pipeline that is red from day one gets ignored, then disabled.
 

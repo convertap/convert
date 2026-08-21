@@ -73,7 +73,7 @@ Migrations now need the owner credential in production, so a deploy carries two 
 
 ## Enforcement
 
-- **G7**, extended and ungated: `assert:rls` fails if the application role is superuser or `BYPASSRLS`, if a declared tenant table is owned by it without FORCE, or if `DATABASE_URL_APP` is absent. All three are real today and none of them needs a table to exist.
+- **G7**, extended and ungated: `assert:rls` fails if the application role is superuser or `BYPASSRLS`, if a declared tenant table is owned by it without FORCE, or if `DATABASE_URL_APP` is absent. **Two of the three are real today.** The ownership check is not: `convert_app` owns no table, and cannot, so the loop has never had anything to iterate — this bullet claimed otherwise until 21 August 2026, and G7 now reports that half as vacuous in its own line rather than inside a passing summary (ADR 0050).
 - **The classification half of this gate is now ADR 0050's**, which replaced `TENANT_TABLES` and `NON_TENANT_TABLES` with one registry in `packages/infra/src/db/access.ts`. The two-list arrangement described above no longer exists in the code, and the one-directional weakness it admitted — a name with no table behind it passing — is checked in both directions there. Read 0050's Enforcement section for what each half proves today; the short version is that classifying `workspace` from its Drizzle declaration is real now, and everything requiring a public table is still waiting on the first migration.
 - **Both composition roots read `DATABASE_URL_APP` and refuse to boot without it**, with no
   fallback to `DATABASE_URL`, and a unit test per runtime holds that shut. Added 21 August 2026
