@@ -8,7 +8,7 @@
 
 **Precedence:** For anything in build scope, [`mvp-scope.md`](./mvp-scope.md) overrides this document. This file records the full product vision and commercial model as pitched; `mvp-scope.md` records what is actually being built first. Divergences are catalogued in [§13](#13-deck-vs-mvp-scope-reconciliation).
 
-**Last updated:** 2026-08-18
+**Last updated:** 2026-08-21
 
 ---
 
@@ -261,13 +261,33 @@ Where [`mvp-scope.md`](./mvp-scope.md) departs from the pitched product. Each di
 
 | # | Deck says | MVP scope says | Consequence |
 |---|-----------|----------------|-------------|
-| 1 | Pipeline is a single stage list: `New → Contacted → Qualified → Proposal → Won/Lost` (slide 6) | **Two separate state machines**, Lead status `New → Contacted → Qualified → Converted → Lost` (§8) and a Deal pipeline (§9) | The deck conflated lead qualification with deal progression. The scope splits them, which is the sounder model but changes the domain: a Lead converts *into* a Deal, so `Converted` is a terminal lead status and the Deal starts its own lifecycle. Needs an explicit rule on which stage a converted lead's deal enters, and whether a Lead may exist without a Deal (it must, or capture breaks). |
-| 2 | Quotes & Invoices are the Starter/Growth dividing line and ship in Phase 2 | Deferred entirely (§21) | The three pricing tiers as published are **not sellable from the MVP**, remove the paywall claim from any pilot-facing material, or bill the pilot on a flat/free basis. |
+| 1 | Pipeline is a single stage list: `New → Contacted → Qualified → Proposal → Won/Lost` (slide 6) | **Two separate state machines**, Lead status `New → Contacted → Qualified → Converted → Lost` (§8) and a Deal pipeline (§9) | The deck conflated lead qualification with deal progression. The scope splits them. **Resolved 21 August 2026 (ADR 0031):** a converted lead's deal enters at `Qualified`; a lead may exist with no deal; `Converted` requires at least one deal; and a deal is an opportunity for **one product**, so a lead may have many. |
+| 2 | Quotes & Invoices are the Starter/Growth dividing line and ship in Phase 2 | Deferred entirely (§21) — **reversed 21 August 2026, see amendment A below** | The tier claim was unsellable while invoices were deferred. Invoicing is now in the MVP (ADR 0033), but **without VAT clearance**, so the paywall claim still should not be made to pilots and the pilot stays free (P3). |
 | 3 | Campaign Analytics with cost-per-lead and conversion-by-source is a Phase 1–2 module | Basic source tracking only; complex attribution out of scope (§15, §20) | Problem P2 remains unsolved after the MVP. This is the deck's second-strongest claim, so the pilot cannot validate it. Say so explicitly in pilot success criteria. |
 | 4 | "Bulk broadcast" WhatsApp/SMS campaigns, 50–5,000 messages/month by tier | Lightweight campaigns; bulk "should remain limited unless required by pilot customers" (§13, §14) | Message-tier pricing is untested by the MVP. Volume-driven cost risk moves to post-MVP. |
 | 5 | Mobile-first "not a desktop tool retrofitted with a mobile app" | Responsive web; native app out of scope (§18, §20) | Defensible for a pilot, but it weakens the differentiation claim on slide 7 versus competitors that ship native apps. Responsive quality is therefore a product risk, not just a QA concern. |
 | 6 | Three personas served (slide 5) | Primary target narrowed to the **Growing SME Sales Team**, 2–5 reps (§4) | Correct call. The collaboration pain is the differentiator, and a solo user cannot validate it. Starter-tier (1 seat) demand goes unvalidated by the pilot. |
 | 7 | Team seats capped 1 / 3 / 10 with GHS 25/seat overage | Seat entitlements and billing not in MVP scope (§5, §20) | Seat limits must not be hardcoded during the MVP; leave the entitlement boundary at a layer that can later enforce caps. |
+
+### Amendment A — commerce enters the MVP, 21 August 2026
+
+Decided by the product owner in the R1–R9 / A1–A6 session. `mvp-scope.md` remains authoritative on
+everything else; these rows record where it has been deliberately overridden, because a `grep` for
+`sku|product catalog|catalogue|inventory|line item|order` across `mvp-scope.md` returns nothing and
+quotes, invoices and payments sit in its Out list.
+
+| # | `mvp-scope.md` says | Now decided | Consequence |
+|---|---------------------|-------------|-------------|
+| A1 | No product or SKU catalogue anywhere | **Products and services in the MVP**, one entity with a kind flag, referenced by leads and deals (ADR 0033) | A deal is per-product (ADR 0031), so the catalogue is a prerequisite rather than an addition. Price is snapshotted onto the deal, so a catalogue edit never rewrites history. |
+| A2 | No file storage of any kind | **A reusable media library**, several images per product, one primary (ADR 0033) | Introduces an **object storage dependency** — provider, region matching the same-region constraint, upload limits, resized derivatives. Needs its own ADR. Only primary derivatives may load in list views or G9 fails. |
+| A3 | Invoices out (§21) | **Invoices in**, draft accumulator per contact, gapless per-workspace numbering, immutable on issue, credit notes for corrections (ADR 0033) | Largest single addition. Ghana's **E-VAT mandate has been in force since January 2026**: VAT-registered businesses must issue through a GRA-Certified Invoicing System with pre-issue clearance, and non-certified software cannot produce a valid VAT invoice. Convert is not certified. Mitigation: tax **off by default**, documents labelled "Invoice"/"Receipt" and never "VAT Invoice", clearance columns left nullable so certification is a code path rather than a migration. **Accepted residual risk:** nothing stops a VAT-registered SME using it and believing the output is valid. Belongs in the pilot agreement and onboarding. |
+| A4 | No tax handling | **A named `tax_rate` per workspace, composed of components**, selected per product, snapshotted per invoice line (ADR 0033) | Ghana stacks levies, so a single percentage per product cannot express reality, and a legislative change would otherwise mean editing the whole catalogue. |
+| A5 | Payments/billing out | **Payment collection, optional per workspace**, into the SME's **own** Mobile Money merchant account; Convert never holds funds (ADR 0034) | Convert stays a software company — no Bank of Ghana licensing, no float, no chargeback liability. Manual payment recording is the baseline, so **payments are not on the MVP critical path**. Convert forgoes transaction revenue: the commercial model rests entirely on subscriptions. Requires encrypted per-workspace merchant credentials, which is the highest-value breach target in the system. |
+| A6 | Single web app | **A platform-admin surface, deferred**; marketing site outside this repository; customer invoice pages are unauthenticated routes in `apps/web` (ADR 0035) | Introduces a fourth principal that crosses tenancy, so **I1 is no longer absolute** — it now names an audited exception. |
+
+**Schedule consequence, stated plainly:** this is a larger body of work than everything currently
+scoped for deals, on an MVP with no feature code written. The schedule needs re-cutting rather than
+absorbing it.
 | 8 | Mobile money as a first-class subscription payment method | Payments deferred (§21) | No subscription billing in the MVP at all. The GHS/mobile-money differentiation is unproven until post-MVP. |
 | 9 | Attribution loop closes: "spend shifts toward what works" (step 5, slide 4) | Learn step reduced to a dashboard of counts and leads-by-source (§15) | The five-step "continuous loop" becomes a four-step funnel in the MVP. Capture → Organize → Engage → Close(deal outcome only). |
 | 10 | Phase 1 MVP is four items: lead capture, pipeline, WhatsApp/SMS campaigns, mobile-first UI (slide 10) | Adds team seats/invites/roles (§5), follow-up tasks and reminders (§11), and a dashboard (§15), three of the four **Phase 2** items, while deferring only quotes/invoices | **The MVP is materially larger than deck Phase 1.** The additions are justified (the 2–5 rep persona is meaningless without seats; reminders are the direct fix for P1), but slide 12's "3-month scope, already defined" no longer describes what is being built. Re-estimate before the greenlight decision. |

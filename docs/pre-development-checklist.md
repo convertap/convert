@@ -106,15 +106,15 @@ One decision session with the product owner, before any code. This is `mvp-scope
 
 | ID | Decision | Recommendation | Status |
 |----|----------|----------------|--------|
-| R1 | Phone number as contact identity, unique per org? merge or flag duplicates? | Normalize to E.164 `+233…` on write; unique per organization; surface a merge prompt rather than silently rejecting | ☐ |
-| R2 | Lead ↔ Deal cardinality, and what creates a Deal | Contact → many Leads; Lead → at most one Deal; Deal created explicitly at Qualified, not automatically | ☐ |
-| R3 | Can a rep see other reps' leads? | Owner sees all; rep sees own by default, with an org-level toggle. Decide now, this scopes every query at the data layer | ☐ |
-| R4 | Reassignment and offboarding: what happens to a deactivated rep's leads | Bulk reassign required in MVP; deactivation must never orphan records | ☐ |
-| R5 | Money representation | GHS only, integer pesewas, never floating point. Deal value nullable | ☐ |
-| R6 | Time and "overdue" semantics | Store UTC, display Africa/Accra (UTC+0, no DST). Define the exact instant a follow-up becomes overdue | ☐ |
-| R7 | Mutability of history | Activity log append-only. No hard deletes, no edits. The log *is* the P3 promise | ☐ |
-| R8 | Final lead statuses vs. deal stages | Keep the two state machines separate. Confirm which stage a converted Lead's Deal enters, and that a Lead may exist with no Deal | ☐ |
-| R9 | Public resource ID strategy | ULID (sortable, opaque) as the external ID on every entity. Auto-increment integers cannot be exposed through the Pro-tier public API and leak row counts | ☐ |
+| R1 | Phone number as contact identity, unique per org? merge or flag duplicates? | **Decided 2026-08-21:** Normalize to E.164 on write; unique per **workspace**; several numbers per contact, one primary, all matchable for inbound; merge prompt on collision; at least one of phone/email. ADR 0030 | ☑ |
+| R2 | Lead ↔ Deal cardinality, and what creates a Deal | **Decided 2026-08-21:** A deal is an opportunity for **one product**, created by explicit rep action at Qualified. A lead has many deals, at most one open per product. ADR 0031 | ☑ |
+| R3 | Can a rep see other reps' leads? | **Decided 2026-08-21:** Owner sees all; rep sees own **plus unassigned**; widening is a per-member `can_view_all_leads` grant. Reps claim unassigned leads without blocking approval. ADR 0032 | ☑ |
+| R4 | Reassignment and offboarding: what happens to a deactivated rep's leads | **Decided 2026-08-21:** Deactivation reassigns to a named member **or** returns records to the unassigned queue. Never orphaned. ADR 0032 | ☑ |
+| R5 | Money representation | **Decided 2026-08-21:** GHS only, integer pesewas, snapshotted onto deals and invoice lines. ADR 0033 | ☑ |
+| R6 | Time and "overdue" semantics | **Decided 2026-08-21:** Store UTC, display Africa/Accra. Confirmed; the exact overdue instant is an implementation detail | ☑ |
+| R7 | Mutability of history | **Decided 2026-08-21:** Activity log append-only, unchanged (I6) | ☑ |
+| R8 | Final lead statuses vs. deal stages | **Decided 2026-08-21:** Two state machines stay distinct. Converted deal enters at `Qualified`; `Converted` needs at least one deal; lost reason optional; Lost terminal. ADR 0031 | ☑ |
+| R9 | Public resource ID strategy | **Decided 2026-08-21:** ULID external IDs, unchanged (I12, ADR 0004) | ☑ |
 
 R1 is first because WhatsApp identity **is** the phone number, dedupe, inbound message matching, and campaign targeting all resolve through it.
 
@@ -127,11 +127,11 @@ R3 is not a permissions feature. It decides whether every query is owner-scoped 
 | ID | Decision | Notes | Status |
 |----|----------|-------|--------|
 | A1 | Login method | **Decided 2026-08-20:** identity accepts email *or* phone (at least one, each unique); passwordless, the credential is always a one-time code; delivered through a `VerificationPort` with Fabric behind it, over email or SMS (WhatsApp once E4 approves an authentication template). 15-minute access token, 30-day rotating refresh. ADR 0029 | ☑ |
-| A2 | Does a user belong to one organization, or many? | Determines the invite flow and the identity model | ☐ |
+| A2 | Does a user belong to one organization, or many? | **Decided 2026-08-21:** A user belongs to **many** workspaces. ADR 0030 | ☑ |
 | A3 | Invite acceptance channel | A1 settled the identifier: an invite is addressed to whichever identifier the owner enters, and accepted by the same one-time code flow. Remaining question is only the wording and expiry of an invite | ◐ |
-| A4 | Tenancy model | Single database, `org_id` on every row, enforced at the query layer. Do not use schema-per-tenant at this size | ☐ |
-| A5 | Entitlement boundary | MVP ships no billing, but tier caps (contacts, seats, messages) must not be hardcoded. Leave a layer that can enforce them later. Pro-tier API access is the first thing this must gate | ☐ |
-| A6 | Principal model | Model the actor as a principal (user session **or** API client) from day one. The deck sells a Pro-tier public API (slide 6, Phase 3), if endpoints assume a session, adding clients later touches every route | ☐ |
+| A4 | Tenancy model | **Decided 2026-08-21:** Workspace is the tenant; `organization` renamed to `workspace`; contacts copied, never shared. ADR 0030 | ☑ |
+| A5 | Entitlement boundary | **Decided 2026-08-21:** Subscription per workspace; split fee platform default with per-workspace override, snapshotted per transaction. ADR 0034 | ☑ |
+| A6 | Principal model | **Decided 2026-08-21:** Principal model confirmed, plus a fourth `PlatformAdminPrincipal` with audited, non-ambient cross-tenant access. ADR 0035 | ☑ |
 
 ---
 
@@ -260,6 +260,21 @@ Fill in as decisions land. Record the decision, not the discussion.
 | 2026-08-18 | S1 | Next.js web, NestJS on Fastify api, one worker, one PostgreSQL, pnpm monorepo. ADR 0001 | Engineering |
 | 2026-08-18 | S7 | OpenAPI generated with `@nestjs/swagger`, committed, drift fails G10. ADR 0015 | Engineering |
 | 2026-08-20 | A1 | Email *or* phone as identifier; passwordless one-time code as the only credential; Fabric behind a `VerificationPort`. ADR 0029 | Product owner |
+| 2026-08-21 | R1, A2, A4 | Workspace is the tenant; `organization` renamed; a user joins many workspaces; contacts copied; contact identity and multi-number inbound matching. ADR 0030 | Product owner |
+| 2026-08-21 | R2, R8 | A deal is a per-product opportunity; a lead has many; a converted lead's deal enters at `Qualified`; lost reason optional; Lost terminal. ADR 0031 | Product owner |
+| 2026-08-21 | R3, R4 | Rep sees own plus unassigned; per-member visibility grant; non-blocking claim; deactivation may park records in the queue. ADR 0032 | Product owner |
+| 2026-08-21 | scope | Commerce enters the MVP: products, media library, invoices, composable tax. `product-spec.md` §13 amendment A. ADR 0033 | Product owner |
+| 2026-08-21 | A5 | Payment collection into the SME's own MoMo account, optional per workspace; Convert never holds funds; manual recording is the baseline. ADR 0034 | Product owner |
+| 2026-08-21 | A6 | `PlatformAdminPrincipal` crosses tenancy only by an audited action; `apps/admin` deferred. ADR 0035 | Product owner |
+
+**New blocking items created by the 21 August session**, none of which existed before it:
+
+| ID | Item | Flags | Status |
+|----|------|-------|--------|
+| E8 | GRA Certified Invoicing System certification, before any VAT-labelled document ships. E-VAT has been mandatory since January 2026, and issuing without pre-issue clearance carries criminal penalties for the SME | ⛔ ⏱ | ☐ |
+| E9 | Payment provider chosen — Hubtel versus MTN direct — on Ghana MoMo coverage, settlement timing, fees, KYC burden. Not blocking, since manual payment recording is the baseline | | ☐ |
+| S8 | Object storage provider and region for the media library, matching the same-region constraint, with upload limits and resized derivatives | ⛔ | ☐ |
+| S9 | Encrypted per-workspace merchant-credential storage with its own key management. Infisical is the wrong tool for tenant-owned keys (ADR 0020) | ⛔ | ☐ |
 
 Rows for S2, S3 and S6 are outstanding: each has a decision recorded in an ADR or enforced in CI
 without ever reaching this table, which is why their status columns above are still wrong. That is

@@ -29,7 +29,7 @@
         },
         {
           "file": "docs/architecture.md",
-          "section": "### Principals **[DECIDE A6]**",
+          "section": "### Principals (A6, decided — ADR 0003; a fourth kind added by ADR 0035)",
           "block": 0,
           "page_block": 3
         }
