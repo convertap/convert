@@ -45,6 +45,12 @@ Reviewers: skip any section the diff does not touch. Do not skip §1.
 - [ ] Reminder logic cannot double-notify for the same task and due window.
 - [ ] Long work is chunked; nothing assumes it will finish before a redeploy.
 
+## 4b. Decision records
+
+- [ ] If the diff adds or changes an ADR, its **Enforcement section was read against the repository**, not accepted (ADR 0048). Every gate, test or rule it names exists, and asserts *this record's* rule rather than a neighbouring one.
+- [ ] Anything decided but unbuilt says so in those words. "Nothing yet" is the expected answer for a record that arrives ahead of its implementation, and is not a reason to withhold approval.
+- [ ] The diff does not describe shipped behaviour in a living document (`architecture.md`, `engineering-guardrails.md`, this file, `CONTRIBUTING.md`) that no code performs.
+
 ## 5. API changes
 
 - [ ] `openapi.json` regenerated and committed in the same commit (G10).

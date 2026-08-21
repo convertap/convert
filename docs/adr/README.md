@@ -49,6 +49,7 @@ One file per decision. Numbered, immutable once accepted, superseded rather than
 | [0045](./0045-zod-schemas-are-the-single-source-for-the-openapi-document.md) | Zod schemas are the single source for the OpenAPI document, adapted to Nest in the api layer | Accepted |
 | [0046](./0046-column-conventions-for-money-time-and-history.md) | Column conventions for money, time and history | Accepted |
 | [0047](./0047-sessions-are-stored-revocable-and-identity-only.md) | Sessions are stored, revocable, and identity-only | Accepted |
+| [0048](./0048-an-enforcement-section-names-what-exists-today.md) | An Enforcement section names what exists today | Accepted |
 
 Statuses: **Proposed** (written, not yet ratified) · **Accepted** (in force) · **Superseded** (replaced, kept for the record) · **Rejected** (considered and declined, kept so it is not re-litigated).
 
@@ -60,6 +61,15 @@ Most records here are **Proposed**: they were extracted from `architecture.md` s
 2. Fill in Context before Decision. If the context does not make the decision feel forced, the decision is probably arbitrary.
 3. Name the rejected alternatives and why they lost. This is the section future readers need most.
 4. State how it is enforced. A CI gate, a boundary rule, a test, or a checklist line. A decision with no enforcement is a preference.
+5. **Say what exists today, and say plainly what does not** (ADR 0048). The Enforcement section is
+   a statement about the repository right now, not about the intended end state — the Decision
+   section already carries that, in the decisive present, which is why the tense cannot be the
+   thing that distinguishes them. **"Nothing yet" is a valid and preferred answer**, and a record
+   reading *"nothing enforces this; it lands with the auth module"* is finished. A gate you name
+   has to assert *this record's* rule rather than merely exist and sound relevant: naming a
+   neighbouring gate is how a rule goes unenforced while reading as covered, and it has happened
+   here more than once. A document that overstates enforcement retires a question that is still
+   open, and the next person builds on a guarantee that is not there.
 
 ## Superseding one
 
