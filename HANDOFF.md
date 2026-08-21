@@ -12,7 +12,7 @@ reconstruct from the repository: what is half-finished, what is unproven, and wh
 
 **Not code. Decisions.** Eleven decisions block writing feature code, and six of those are
 product rules owned by the product owner (R1, R2, R3, R8, A1, E6). No amount of engineering
-moves them. `packages/infra/src/db/schema.ts` holds `organization` and nothing else, and
+moves them. `packages/infra/src/db/schema.ts` holds `workspace` and nothing else, and
 `TENANT_TABLES` is an empty array, deliberately: R1 to R3 and R8 decide the shape of contact,
 lead and deal, and guessing them means building the schema twice.
 
@@ -166,7 +166,7 @@ evidence.** #4 and #5 only need `gh pr update-branch` and will follow.
 item.** `DATABASE_URL` resolves to the `postgres` superuser, and a superuser ignores row-level
 security completely, as does a table owner without `FORCE ROW LEVEL SECURITY`. ADR 0002 makes RLS
 *the* tenancy boundary. G7 asserts that RLS is *enabled* on a table, not that the connecting role
-is *subject* to it, so one organisation could read another's contacts with a green pipeline above
+is *subject* to it, so one workspace could read another's contacts with a green pipeline above
 it.
 
 Harmless today because no tenant table exists. **Before the first migration**, two things:

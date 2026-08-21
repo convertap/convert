@@ -10,7 +10,7 @@ Reviewers: skip any section the diff does not touch. Do not skip §1.
 
 ## 1. Every review, no exceptions
 
-- [ ] **Tenancy.** Every new table has `org_id NOT NULL` and an RLS policy. No query bypasses RLS. No test disables RLS to pass. A test sets the org context instead.
+- [ ] **Tenancy.** Every new table has `workspace_id NOT NULL` and an RLS policy. No query bypasses RLS. No test disables RLS to pass. A test sets the workspace context instead.
 - [ ] **Principal.** Every new use case takes a `Principal` as its first argument. Nothing reads an ambient session or a global.
 - [ ] **Activity.** A state change a rep would expect to see in the timeline writes an `activity` row, with the acting principal recorded.
 - [ ] **No layer leak.** Domain rules are in `core`, orchestration in `application`, HTTP in `api`, rendering in `web`. A rule in a controller is a finding even when the boundary checker allows it.
@@ -76,7 +76,7 @@ Reviewers: skip any section the diff does not touch. Do not skip §1.
 - [ ] Webhook ingress: signature verified before parsing.
 - [ ] No secret in code, config, or test fixture. Nothing new logged that contains PII.
 - [ ] Authorization checked in the `application` layer, not only hidden in the UI.
-- [ ] Any new export or bulk read path respects per-organization scoping and is audited.
+- [ ] Any new export or bulk read path respects per-workspace scoping and is audited.
 
 ## 8. Tests
 

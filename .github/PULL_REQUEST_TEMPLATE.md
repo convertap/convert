@@ -17,11 +17,11 @@
 Author signs before requesting review. Full list: `docs/code-review-checklist.md`.
 
 **Always**
-- [ ] New tables have `org_id NOT NULL` plus an RLS policy; no test disables RLS
+- [ ] New tables have `workspace_id NOT NULL` plus an RLS policy; no test disables RLS
 - [ ] New use cases take a `Principal` (ADR 0003)
 - [ ] Rep-visible state changes write an `activity` row with the acting principal
 - [ ] Domain rules live in `core`, not in a controller or a React component
-- [ ] Verified with a second organization that data does not leak across tenants
+- [ ] Verified with a second workspace that data does not leak across tenants
 
 **If the API changed**
 - [ ] `openapi.json` regenerated and committed (G10, ADR 0015)

@@ -33,7 +33,7 @@ its absence.
 
 ## Use the project's vocabulary
 
-- **Workspace**, not organization. Renamed 21 August (ADR 0030); it is the tenant and the only
+- **Workspace**, not workspace. Renamed 21 August (ADR 0030); it is the tenant and the only
   tenancy boundary.
 - **Lead status** (`New → Contacted → Qualified → Converted → Lost`) is **not** the **deal pipeline**
   (`New → Contacted → Qualified → Proposal → Won/Lost`). Two state machines. Never collapse them.

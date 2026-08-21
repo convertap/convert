@@ -69,7 +69,7 @@ Commits follow Conventional Commits, `feat(core/crm): …`, and carry **no agent
 
 Not style opinions. These are the ones that cost real money or real trust:
 
-- A query or table without organization scoping.
+- A query or table without workspace scoping.
 - A use case that does not take a `Principal`.
 - A provider SDK imported above `packages/infra`.
 - Domain logic in a controller or a React component.

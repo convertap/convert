@@ -4,10 +4,10 @@ import { TENANT_TABLES } from '../src/db/schema';
 
 /**
  * Gate G7, second half. Asserts that every tenant table has row-level security enabled
- * and at least one policy, and that no table carrying org_id was forgotten.
+ * and at least one policy, and that no table carrying workspace_id was forgotten.
  *
  * This is the check that turns ADR 0002 from a document into a property of the database.
- * A table with an org_id column and no policy looks completely normal in code review.
+ * A table with an workspace_id column and no policy looks completely normal in code review.
  */
 const main = async () => {
   const url = process.env.DATABASE_URL;
@@ -31,7 +31,7 @@ const main = async () => {
   const withOrgId = await db.execute<{ table_name: string }>(sql`
     select table_name
     from information_schema.columns
-    where table_schema = 'public' and column_name = 'org_id'
+    where table_schema = 'public' and column_name = 'workspace_id'
   `);
 
   const rlsByTable = new Map(enabled.rows.map((r) => [r.tablename, r.rowsecurity]));
@@ -48,7 +48,7 @@ const main = async () => {
   for (const row of withOrgId.rows) {
     if (!declared.has(row.table_name)) {
       failures.push(
-        `${row.table_name}: has an org_id column but is not listed in TENANT_TABLES, so it is unprotected`,
+        `${row.table_name}: has an workspace_id column but is not listed in TENANT_TABLES, so it is unprotected`,
       );
     }
   }
@@ -61,7 +61,7 @@ const main = async () => {
   }
 
   console.warn(
-    `RLS ok - ${TENANT_TABLES.length} tenant table(s) verified, ${withOrgId.rows.length} table(s) carry org_id`,
+    `RLS ok - ${TENANT_TABLES.length} tenant table(s) verified, ${withOrgId.rows.length} table(s) carry workspace_id`,
   );
   process.exit(0);
 };

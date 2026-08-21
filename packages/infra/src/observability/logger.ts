@@ -1,7 +1,7 @@
 import pino from 'pino';
 
 /**
- * Structured logs carrying request id, org id, and principal kind (architecture.md
+ * Structured logs carrying request id, workspace id, and principal kind (architecture.md
  * section 15). Message bodies and full phone numbers are never logged - they are third
  * party PII under Act 843, and a log aggregator is not a lawful place to keep them.
  */

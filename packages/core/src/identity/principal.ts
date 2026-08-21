@@ -10,7 +10,7 @@ import type { Ulid } from '@convert/contracts';
 export type OrgRole = 'owner' | 'sales_rep';
 
 interface BasePrincipal {
-  readonly orgId: Ulid;
+  readonly workspaceId: Ulid;
 }
 
 export interface UserPrincipal extends BasePrincipal {

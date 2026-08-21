@@ -114,7 +114,7 @@ Two known dark gaps: `border` and `input` sit at 1.04 against the dark backgroun
 - Shells and navigation live in `components/layouts`: `PageShell`, `AppSidebar`, `MobileNav`.
 - Semantic and domain tokens only. No raw Tailwind colour utilities (`bg-emerald-600`) in product components.
 - Icons come from lucide, **imported individually**. A barrel import pulls the whole set into the bundle.
-- Every data surface has loading, empty, and error states. Empty gets real attention: a new organization sees every screen empty first, and that is the first impression the product makes.
+- Every data surface has loading, empty, and error states. Empty gets real attention: a new workspace sees every screen empty first, and that is the first impression the product makes.
 
 ### Promotion rule
 

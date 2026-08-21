@@ -11,7 +11,7 @@ Gate G12. A story is not done when the code merges. It is done when a pilot SME 
 **Built**
 - [ ] Acceptance criteria met, all of them, including the ones that were inconvenient.
 - [ ] Works on a 360 px viewport, on a real phone, on a throttled connection, not only in a desktop browser at 1440 px.
-- [ ] Loading, empty, and error states exist. "Empty" gets real attention: a new organization sees every screen empty first, and that is the first impression.
+- [ ] Loading, empty, and error states exist. "Empty" gets real attention: a new workspace sees every screen empty first, and that is the first impression.
 - [ ] Every error state answers three questions: what happened, what to do now, and whether their work survived (`docs/error-handling.md` section 5).
 - [ ] Nothing half-wired behind a flag without the flag being documented.
 
@@ -22,7 +22,7 @@ Gate G12. A story is not done when the code merges. It is done when a pilot SME 
 
 **Safe**
 - [ ] Authorization enforced in `application`, verified as both an owner and a rep.
-- [ ] Cross-tenant check done: a second organization cannot see or touch this data. Verified, not assumed.
+- [ ] Cross-tenant check done: a second workspace cannot see or touch this data. Verified, not assumed.
 - [ ] No new PII in logs.
 
 **Visible**
@@ -65,7 +65,7 @@ A story is **not** done if any of the following is true. Each of these has a hab
 - The happy path is tested and the failure path is "we'll see."
 - It is behind a flag nobody has enabled and nobody has scheduled to enable.
 - The tests pass because they assert what the code does rather than what the rule is.
-- Tenancy was "obviously fine" and never checked with a second organization.
+- Tenancy was "obviously fine" and never checked with a second workspace.
 - The API changed and `openapi.json` did not.
 
 ---
@@ -79,5 +79,5 @@ Beyond per-story done. This is `mvp-scope.md` §28 with the operational parts ma
 - [ ] Backups verified by restoring one, not by trusting that backups are configured.
 - [ ] Error tracking, uptime alerting, and queue-depth alerting are live and pointed at someone.
 - [ ] Provider quality rating and template approval status are visible to the team, a silent WhatsApp quality downgrade throttles sends and reads as a product bug.
-- [ ] Pilot data terms signed (checklist L2), and the per-organization export and delete paths exist.
+- [ ] Pilot data terms signed (checklist L2), and the per-workspace export and delete paths exist.
 - [ ] Someone owns the pilot support channel, and pilot SMEs know how to reach them.
