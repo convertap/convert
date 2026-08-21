@@ -30,6 +30,13 @@ One file per decision. Numbered, immutable once accepted, superseded rather than
 | [0022](./0022-staging-on-railway-in-amsterdam.md) | Staging on Railway in Amsterdam, database included | Accepted |
 | [0023](./0023-bound-every-ci-step-in-time.md) | Bound every CI step in time, and make apt wait deliberately | Accepted |
 | [0024](./0024-deploy-through-ci-not-straight-from-a-push.md) | Deploy through CI, not straight from a push | Accepted |
+| [0029](./0029-authentication-by-one-time-code-over-a-verification-port.md) | Authentication by one-time code, over a verification port | Accepted |
+| [0030](./0030-the-workspace-is-the-tenant.md) | The workspace is the tenant, and a contact is identified within it | Accepted |
+| [0031](./0031-a-deal-is-a-per-sku-opportunity.md) | A deal is a per-SKU opportunity, and a lead may have many | Accepted |
+| [0032](./0032-visibility-is-per-member-and-claiming-does-not-block.md) | Visibility is granted per member, and claiming a lead does not wait for approval | Accepted |
+| [0033](./0033-commerce-products-invoices-and-tax.md) | Products, invoices and tax enter the MVP, and what that costs | Accepted |
+| [0034](./0034-payments-collect-to-the-smes-own-account.md) | Payments settle to the SME's own mobile money account | Accepted |
+| [0035](./0035-platform-admin-crosses-tenancy-only-by-audited-action.md) | A platform admin crosses tenancy only by an audited action | Accepted |
 
 Statuses: **Proposed** (written, not yet ratified) · **Accepted** (in force) · **Superseded** (replaced, kept for the record) · **Rejected** (considered and declined, kept so it is not re-litigated).
 

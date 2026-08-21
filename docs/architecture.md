@@ -222,28 +222,46 @@ reopening creates a new deal rather than reviving the old one (I5).
 
 ### Key fields on `contact`
 
-`phone_e164` is the natural identity (checklist R1). Normalize on write, store the raw input alongside it for support purposes, and index `(org_id, phone_e164)` uniquely.
+`phone_e164` is the natural identity (R1, ADR 0030). Normalize to E.164 on write, store the raw input alongside for support, and index uniquely per workspace. A contact may hold several numbers in `contact_phone`, one flagged primary, **all** of them matchable for inbound — multi-SIM is normal in Ghana, and a single column silently creates a duplicate contact the first time someone messages from their other network. A contact needs at least one of phone or email, not both.
 
 `last_inbound_at` is maintained on every inbound message. It is what determines whether the WhatsApp 24-hour window is open, see §10.3.
 
-### Invariants **[DECIDE R1–R9]**
+### Invariants
 
-Proposals, to be confirmed in the §3 decision session of the checklist:
+**Decided 21 August 2026** in the product-owner session (R1–R9, A1–A6). I1, I2, I3, I4 and I7 changed
+as a result; the ADR against each row is where the reasoning lives. Removing or weakening one of
+these requires an ADR that supersedes its source.
 
-| ID | Invariant |
-|----|-----------|
-| I1 | Every tenant-owned row carries a non-null `org_id`; no cross-org foreign key ever resolves |
-| I2 | `(org_id, phone_e164)` is unique on `contact`; a second attempt surfaces a merge prompt rather than a validation error |
-| I3 | A `lead` may exist with no `deal`. A `deal` requires a `contact`. A `lead` converts to at most one `deal` |
-| I4 | `lead.status = Converted` requires a linked `deal`; `Lost` requires a `lost_reason` |
-| I5 | `deal` outcomes `Won`/`Lost` are terminal; reopening creates a new deal, preserving history |
-| I6 | `activity` rows are insert-only. No update, no delete, at any layer (C4) |
-| I7 | Deactivating a member never orphans records: reassignment is required in the same transaction (R4) |
-| I8 | Money is integer pesewas, currency fixed to GHS (R5) |
-| I9 | A marketing message requires a live `consent` row for that channel at send time (L3, E4.2) |
-| I10 | A free-form WhatsApp message requires an open conversation window; otherwise only a template may be sent (§10.3) |
-| I11 | All timestamps stored UTC; all display and all "due"/"overdue" arithmetic in Africa/Accra (R6) |
-| I12 | Every entity exposes an opaque external ULID; internal integer keys never leave the process (R9) |
+| ID | Invariant | Source |
+|----|-----------|--------|
+| I1 | Every tenant-owned row carries a non-null `workspace_id`. No cross-tenant access, **except an audited platform-admin action** | 0030, 0035 |
+| I2 | A phone number is unique per workspace across `contact_phone`, and **every** stored number is matchable for inbound. A collision surfaces a merge prompt, never a validation error | 0030 |
+| I3 | A `lead` may exist with no `deal`. A `deal` requires a `contact` and references one product. A `lead` may have **many** deals, at most one **open** per product | 0031 |
+| I4 | `lead.status = Converted` requires **at least one** linked `deal`. `lost_reason` is **optional**. `Lost` is terminal: a returning customer produces a new lead | 0031 |
+| I5 | `deal` outcomes `Won`/`Lost` are terminal; reopening creates a new deal, preserving history | — |
+| I6 | `activity` rows are insert-only. No update, no delete, at any layer (C4) | — |
+| I7 | Deactivating a member never orphans records: they are reassigned to a named member **or returned to the unassigned queue** | 0032 |
+| I8 | Money is integer pesewas, currency fixed to GHS (R5) | — |
+| I9 | A marketing message requires a live `consent` row for that channel at send time (L3, E4.2) | — |
+| I10 | A free-form WhatsApp message requires an open conversation window; otherwise only a template may be sent (§10.3) | — |
+| I11 | All timestamps stored UTC; all display and all "due"/"overdue" arithmetic in Africa/Accra (R6) | — |
+| I12 | Every entity exposes an opaque external ULID; internal integer keys never leave the process (R9) | — |
+
+The 21 August session also created invariants the numbering does not yet cover, because they belong
+to entities that scope did not previously include. They are listed here so they are not lost, and
+they take numbers when the entities land:
+
+| Invariant | Source |
+|-----------|--------|
+| A `contact` requires at least one of phone or email; a `user` likewise | 0030, 0029 |
+| A list query for a member without `can_view_all_leads` returns only their own records plus unassigned ones | 0032 |
+| A claim on an unassigned lead is atomic: concurrent claims resolve to exactly one owner | 0032 |
+| An issued `invoice` is immutable; corrections are credit notes. Numbering is gapless per workspace | 0033 |
+| A `deal` and its invoice line carry snapshotted product name, unit price and tax components | 0033 |
+| A `media_asset` cannot be hard-deleted while referenced | 0033 |
+| Invoice payment status is **derived** from payment rows, never a settable flag | 0034 |
+| A provider payment callback is idempotent on its provider reference | 0034 |
+| Every cross-tenant read by a platform admin produces an `audit_event` row | 0035 |
 
 ---
 
@@ -253,11 +271,11 @@ Three layers, each catching what the one above misses.
 
 **1. Database: Postgres row-level security.** Every tenant table gets an RLS policy on `org_id`, and the application connects as a non-superuser role that cannot bypass it. The session sets the current org per transaction. This turns a forgotten `WHERE org_id = …` from a data breach into an empty result set. It is the single most valuable decision in this document and costs about a day.
 
-**2. Service layer: authorization.** Role checks (`Owner`, `Sales Representative`) and record-level visibility. **[DECIDE R3]**: the proposal is owner sees all, rep sees own by default, with an org-level toggle to open the pipeline. This must be resolved before implementation because it determines whether every list query carries an owner predicate.
+**2. Service layer: authorization.** Role checks (`Owner`, `Sales Representative`) and record-level visibility. **Decided (R3, ADR 0032):** an owner sees everything; a rep sees their own records **plus everything unassigned**; widening is a per-member `can_view_all_leads` grant rather than a workspace-wide toggle. Every tenant list query therefore carries the predicate `role = Owner OR can_view_all_leads OR owner_id = :member OR owner_id IS NULL`.
 
 **3. Interface layer: principals.** Resolves *who* is acting and hands the service layer a principal. Never queries the database directly.
 
-### Principals **[DECIDE A6]**
+### Principals (A6, decided — ADR 0003; a fourth kind added by ADR 0035)
 
 ```mermaid
 flowchart TD
