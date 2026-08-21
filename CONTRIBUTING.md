@@ -8,6 +8,13 @@ Read this once before your first pull request. It is short because the detail li
 
 Architecture is [`docs/architecture.md`](./docs/architecture.md); product scope is [`docs/mvp-scope.md`](./docs/mvp-scope.md), which wins any disagreement with the pitch-derived spec.
 
+## Prerequisites
+
+- Node.js 22 and Corepack-enabled pnpm 11
+- Docker with Compose for local PostgreSQL 16
+- Python 3.12 for repository guardrails
+- Infisical CLI only when using shared secrets or the Notion mirror
+
 ## Current state
 
 The workspace is scaffolded and the api boots. `apps/api`, `apps/web` and `apps/worker` exist alongside `packages/contracts`, `core`, `application` and `infra`, and fifteen guardrails run in CI.
@@ -26,11 +33,14 @@ Run the first one before every push. It takes under a second.
 
 ## Secrets
 
-Infisical holds them; nothing lives in a file (ADR 0020). Once per machine:
+Production secrets belong in Infisical; nothing secret belongs in git (ADR 0020). At present the
+shared project contains `NOTION_TOKEN`, not the local database credentials. For local Postgres,
+set the three database variables in your shell from the values below; use Infisical once managed
+environment credentials have been provisioned. Once per machine:
 
 ```bash
 infisical login
-infisical init           # links this directory to the Infisical project
+infisical init           # only if the committed project link is unavailable
 ```
 
 Then prefix anything that needs a secret:
@@ -58,14 +68,38 @@ pnpm guardrails          # boundaries, invariant coverage, token contrast
 
 The api and worker connect as `convert_app`, never as the owner (ADR 0042), so they need **both** connection strings present and will refuse to start on the wrong one.
 
+Three variables, and the two passwords must match. **These values are local throwaways and belong
+nowhere but a laptop** — a deployed environment takes them from Infisical, and `DATABASE_URL_APP`
+there carries a real password (ADR 0020, `docs/deployment-runbook.md`).
+
+```bash
+export DATABASE_URL='postgres://convert:convert@localhost:5432/convert'
+export APP_DB_PASSWORD='convert-app-local'
+export DATABASE_URL_APP='postgres://convert_app:convert-app-local@localhost:5432/convert'
+```
+
+PowerShell, since the maintainer's machine is Windows:
+
+```powershell
+$env:DATABASE_URL='postgres://convert:convert@localhost:5432/convert'
+$env:APP_DB_PASSWORD='convert-app-local'
+$env:DATABASE_URL_APP='postgres://convert_app:convert-app-local@localhost:5432/convert'
+```
+
+Then, in order:
+
 ```bash
 pnpm db:up                                    # Postgres 16 in Docker, from docker-compose.yml
-infisical run --env=dev -- pnpm --filter @convert/infra bootstrap   # creates convert_app
-infisical run --env=dev -- pnpm db:assert-rls                       # proves RLS applies to it
-infisical run --env=dev -- pnpm --filter @convert/infra assert:conventions
+pnpm --filter @convert/infra bootstrap        # creates convert_app; idempotent, safe to rerun
+pnpm db:migrate                               # currently reports that there is nothing to apply
+pnpm db:assert-rls                            # proves RLS applies to the application role
+pnpm --filter @convert/infra assert:conventions
 ```
 
 `bootstrap` is what creates the application role. Skip it and `assert:rls` fails saying the role does not exist, which is the intended message rather than a puzzle.
+
+Deployment variables, pre-deploy migrations, verification and rollback are documented in
+[`docs/deployment-runbook.md`](./docs/deployment-runbook.md).
 
 **`infisical run` is how a process gets its environment.** Exporting `.env.local` does *not* feed the api or the worker: neither initialises `dotenv`, by design under ADR 0020. If you must work offline, export the file and then either source it into your shell or pass it with `node --env-file`; do not expect a process to find it on its own.
 

@@ -1,6 +1,6 @@
 # Convert. SME Leads Platform
 
-Mobile-first sales & lead management platform for Ghanaian SMEs. The workspace is scaffolded and the API boots; no feature code exists yet, because the product rules that shape the schema are still open (R1–R3, R8).
+Mobile-first sales & lead management platform for Ghanaian SMEs. The workspace and delivery foundations are scaffolded; product rules R1–R9 and A1–A6 are settled, and the next engineering work is the ordered schema and migration implementation.
 
 ## Documents and precedence
 
@@ -40,24 +40,30 @@ WhatsApp integration depth. Meta test credentials, Meta Cloud API direct, third-
 Decided 2026-08-18 (S1, ADR 0001): **Next.js** web · **NestJS on the Fastify adapter** api · **NestJS standalone** worker · **PostgreSQL 16** with **Drizzle** (ADR 0017) · pnpm monorepo · Postgres-backed job queue (ADR 0010) · OpenAPI generated and committed from the first endpoint (S7, ADR 0015).
 
 **Scaffolded.** pnpm workspace with Turborepo: `apps/api`, `apps/web`, `apps/worker`, and
-`packages/contracts`, `core`, `application`, `infra`. The API boots and serves Swagger. Twelve
-invariant tests pass. Guardrails G1–G15 run in CI and four of them run before every push.
+`packages/contracts`, `core`, `application`, `infra`. The API boots, serves Swagger, validates
+Zod boundary contracts, and exposes database-backed readiness. The twelve invariant specs are
+registered but remain `todo` until their schema features exist. Guardrails G1–G15 run in CI and
+four of them run before every push.
 
 **What is deliberately not built.** `packages/infra/src/db/schema.ts` holds `workspace` and
 nothing else, and `TENANT_TABLES` is an empty array. There are no migrations. That is not an
-oversight: R1, R2, R3 and R8 decide the shape of contact, lead and deal, and guessing them means
-building the schema twice.
+oversight: the product rules are settled, but their tables must land in an ordered migration plan
+so each tenancy and data-integrity invariant arrives with the table it governs.
 
-**Two gates therefore currently pass without checking anything, down from three.** Say so rather than reporting a
-green tick:
+**Three gates currently pass without checking anything.** Two by design, one that was miscounted until
+21 August 2026. Say so rather than reporting a green tick:
 
 | Gate | Why it is vacuous today | Real when |
 |------|-------------------------|-----------|
 | ~~G7 migrations and RLS~~ | **No longer vacuous, 21 August 2026.** It creates a fixture tenant table, proves a cross-tenant read returns nothing as the application role, and proves the owner still sees both rows so the result means something (ADR 0042). The *migration* half still skips until migrations exist | the real schema half becomes real with the first migration |
 | G8 integration tests | `tests/integration/` holds only `.gitkeep` | there is a repository to test against real Postgres |
 | G9 performance budget | `apps/web` is a placeholder page, so the budget is trivially met | the pipeline and contact screens exist |
+| G6 invariant coverage | It checks that a spec **file** exists per invariant. All twelve are `test.todo`, with a header saying so, so nothing is asserted. It was listed among the working gates until this was noticed | the entities land, one invariant at a time, with the table each governs |
 
-G1–G6 and G13–G15 are doing real work today.
+G1–G5 and G13–G15 are doing real work today. **G4 belonged on the list above until 21 August**: it is
+documented as "no new warnings" and ran `eslint .` with no `--max-warnings`, so a warning exited 0.
+That is fixed, and the pattern is worth more than the fix — a gate can be listed as working, run on
+every push, and assert nothing. ADR 0048 is the rule that came out of it.
 
 Hard constraint: **web, api, and Postgres deploy to the same region.** Every render is web → api → db, so a split deployment costs two intercontinental round trips against a 2.5 s LCP budget. Rules out edge-only hosting.
 
