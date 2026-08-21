@@ -77,6 +77,12 @@ Verify current limits, category definitions, and pricing directly with Meta, pub
 
 Sender ID registration runs through a Ghana aggregator (Hubtel, mNotify, Arkesel, Termii, or a telco bulk product) and needs NCA approval. Days. Confirm the provider exposes a **delivery-report webhook** before committing. `Mvp-scope.md` §13 requires delivery status.
 
+**Added 2026-08-21: inbound SMS is now a requirement too, and it was not before.** ADR 0040 ships
+`STOP` as a withdrawal route, which needs the provider to *receive* messages and parse a keyword —
+a different capability from delivery reports. Fabric carries SMS (ADR 0036) and its support for
+inbound reception is unverified. If it can only send, either the SMS withdrawal route changes or
+the provider does. Confirm before telling anyone that `STOP` works.
+
 ### E6. Meta Lead Ads
 
 The deck promises Facebook/Instagram lead ads (slide 6); `mvp-scope.md` §7 hedges it as "may be introduced depending on implementation complexity." Decide now. If it is in, Meta app review for the leadgen webhook permission is further lead time and must start alongside E1.
@@ -90,8 +96,8 @@ Cheapest before the pilot, expensive after. Pilot SMEs upload real customer phon
 | ID | Item | Flags | Owner | Status |
 |----|------|-------|-------|--------|
 | L1 | Register with Ghana's Data Protection Commission (Act 843) | ⏱ | | ☐ |
-| L2 | Controller/processor terms in the pilot agreement | ⛔ | | ☐ |
-| L3 | Marketing opt-in consent model, capture, storage, withdrawal | ⛔ | | ☐ |
+| L2 | Controller/processor terms in the pilot agreement. **Not calendar-bound** — a data-processing addendum is a standard clause set, days of work, waiting on nobody. It gates the first upload of real customer data, not commercial launch. **Sub-processors to disclose, as of 2026-08-21:** Meta (WhatsApp, lead ads), Fabric (SMS and sign-in codes), Cloudflare R2 (product images), Hubtel (customer payment data) | ⛔ | | ☐ |
+| L3 | Marketing opt-in consent model, capture, storage, withdrawal. **Mechanism decided 2026-08-21 (ADR 0040):** an inbound WhatsApp message is not marketing consent; imported contacts arrive with none and campaigns to them are blocked; the exact wording shown is stored with the record; withdrawal has three entry points writing one append-only record. **Still open: the legal text**, which needs a lawyer | ⛔ | | ◐ |
 | L4 | Data retention, export, and deletion policy | | | ☐ |
 
 L2 blocks because pilot SMEs are the data controllers and Convert is the processor; that split has to be written down before their customer data lands in the system.
@@ -270,6 +276,7 @@ Fill in as decisions land. Record the decision, not the discussion.
 | 2026-08-21 | E6 | Facebook and Instagram lead ads are in scope, against the engineering recommendation, with Meta app review named as the cost. ADR 0037 | Product owner |
 | 2026-08-21 | S8, S9 | Cloudflare R2 for media; envelope-encrypted per-workspace credentials with the master key outside Postgres. ADR 0038 | Engineering |
 | 2026-08-21 | E9, E8 | Hubtel for payments. Invoicing in two stages: serve non-VAT-registered businesses now, pursue GRA certification as a funded workstream. ADR 0039 | Product owner |
+| 2026-08-21 | L3 | Consent operating rules: an inbound message is not marketing consent, imports create none, the wording shown is stored, withdrawal has three entry points and one record. Legal text still outstanding. ADR 0040 | Product owner |
 
 **New blocking items created by the 21 August session**, none of which existed before it:
 
