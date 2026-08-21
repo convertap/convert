@@ -218,14 +218,18 @@ Three decisions requested:
 
 ## 12. Open Questions
 
-Gaps in the deck. Items resolved by [`mvp-scope.md`](./mvp-scope.md) are marked **[RESOLVED]**; the rest still need answers.
+Gaps in the deck. Items resolved by [`mvp-scope.md`](./mvp-scope.md) or by a decision record are marked **[RESOLVED]**; the rest still need answers.
+
+**Last reviewed 21 August 2026**, after the product-owner session that settled R1–R9 and A1–A6. That session closed two questions here and opened three.
 
 ### Blocks Phase 1 build
-- **WhatsApp channel mechanics.** Still open, and the highest-risk item in the project. "WhatsApp-native" spans very different builds: Meta test credentials, Meta Cloud API production access, third-party BSPs, click-to-chat deep links, and a future internal production provider. The demo may use a Meta test account, BSP sandbox, or temporary third-party production-ready account to prove the workflow, but production business verification, template approval, sending limits, and pricing remain unresolved until the production provider path is chosen. All provider choices must sit behind the messaging adapter contract in `architecture.md` §10.1.
+- **WhatsApp channel mechanics.** Still open, still the highest-risk item, and **escalated on 21 August: it now gates sign-in.** A1 put authentication behind a one-time code delivered by Fabric (ADR 0029), so if verification cannot reach a Ghanaian number, nobody can log in at all, by any channel. The question to answer before any of the rest is whether Fabric holds its own Meta Solution Provider status or wraps Cloud API — recorded on E3. "WhatsApp-native" spans very different builds: Meta test credentials, Meta Cloud API production access, third-party BSPs, click-to-chat deep links, and a future internal production provider. The demo may use a Meta test account, BSP sandbox, or temporary third-party production-ready account to prove the workflow, but production business verification, template approval, sending limits, and pricing remain unresolved until the production provider path is chosen. All provider choices must sit behind the messaging adapter contract in `architecture.md` §10.1.
 - **Inbound WhatsApp capture.** Still open. `mvp-scope.md` §7 hedges this as "WhatsApp-originated lead identification where integration allows" and §12 defers two-way inbox sync. A demo can validate inbound capture through test/sandbox credentials, but production MVP scope depends on repeating the check with the chosen production provider. If inbound capture does not ship, the MVP's lead capture rests on manual entry plus web forms.
-- **Message quota economics.** Still open. Per-message cost against the 5,000/mo Pro allowance at GHS 700/mo determines whether the top tier has positive gross margin. Demo credentials do not prove production economics; this is blocked behind the production WhatsApp provider decision.
+- **Message quota economics.** Still open, and now larger than the deck's framing. Per-message cost against the 5,000/mo Pro allowance at GHS 700/mo determines whether the top tier has positive gross margin. **A1 adds a second, unavoidable stream:** every sign-in sends a one-time code, so messaging is now a cost of *logging in*, not only of selling. The 30-day session was chosen to hold that near one message per user per month; shortening it multiplies the bill. Demo credentials prove none of this.
 - **[RESOLVED] Mobile-first delivery.** Responsive web across mobile browsers, tablets, and desktop. No native app unless separately approved (`mvp-scope.md` §18). Offline tolerance is not in scope.
-- **[RESOLVED] Multi-tenancy and data model.** Organization → Organization Member → User, with Owner/Administrator and Sales Representative roles (`mvp-scope.md` §5, §24). Cross-rep visibility rules are still an open business rule (`mvp-scope.md` §22).
+- **[RESOLVED] Multi-tenancy and data model.** **Workspace** → Workspace Member → User, with Owner/Administrator and Sales Representative roles. `organization` was renamed on 21 August (ADR 0030). A user may belong to many workspaces; contacts are copied per workspace and never shared.
+- **[RESOLVED] Cross-rep visibility.** Settled 21 August (R3, ADR 0032): an owner sees everything, a rep sees their own records plus everything unassigned, and widening is a per-member grant rather than a workspace-wide switch. Reps claim unassigned leads without waiting for approval. This was the last of the schema-shaping business rules; R1–R9 and A1–A6 are all now recorded in the checklist decision log.
+- **GRA invoice certification.** New on 21 August, and it blocks part of what was just added to scope. Ghana's E-VAT mandate has required every VAT-registered business to issue through a GRA-Certified Invoicing System, with pre-issue clearance, since January 2026. Convert is not certified, so the first release ships tax off and labels nothing a VAT invoice (ADR 0033). Whether Convert seeks certification, restricts itself to non-VAT-registered SMEs, or integrates a certified third party is unanswered. Tracked as E8.
 
 ### Blocks pricing / packaging
 
@@ -236,6 +240,8 @@ None of these block the MVP build, no billing is in MVP scope, but all block com
 - Setup/migration assistance pricing.
 - What happens on contact-cap or message-quota exhaustion (hard block, soft block, or upgrade prompt).
 - How the pilot cohort is billed, given the MVP ships neither billing nor the Growth-tier differentiators.
+- **What now separates the tiers, given invoices ship but campaign analytics do not.** The deck used Quotes & Invoices *and* Campaign Analytics as the Starter/Growth dividing line. Invoices moved into the first release on 21 August (§13 amendment A), quotes and analytics did not, and the invoices that do ship are not VAT invoices. So the published tier comparison describes a product that does not exist in either direction.
+- **Whether the platform ever takes a share of a transaction.** The plumbing is built and set to zero (ADR 0034). Turning it on is a pricing decision with a promise attached: pilots were told the pilot is free.
 
 ### Blocks the attribution promise (P2)
 - **[PARTIALLY RESOLVED] Attribution depth.** The MVP ships basic source tracking and "leads by source" only (`mvp-scope.md` §15); complex marketing attribution and cost-per-lead reporting are explicitly out of scope (§20, §21). This means **problem P2, marketing spend is a black box, is not solved by the MVP.** The MVP answers "where did leads come from," not "which spend produced paying customers."
@@ -251,7 +257,8 @@ Not gaps in this document. Gaps in the pitch. Each is a question an investor or 
 - **Unit economics**. CAC, payback period, gross margin per tier.
 - **Team and hiring plan.**
 - **Budget** for the 3-month Phase 1 build.
-- **Data protection compliance.** Ghana Data Protection Act obligations for storing customer contact data and message history. Relevant from the first pilot, not later. Pilot SMEs will upload real customer phone numbers. Now tracked as checklist items L1–L4.
+- **Data protection compliance.** Ghana Data Protection Act obligations for storing customer contact data and message history. Relevant from the first pilot, not later. Pilot SMEs will upload real customer phone numbers. Now tracked as checklist items L1–L4. **Widened on 21 August:** the product will also hold each workspace's payment-provider credentials and its payment records, which is a materially higher-value target than a contact list — a breach there reaches every pilot SME's payment account at once (S9).
+- **Tax and revenue-authority obligations.** Absent from the deck entirely, and not a minor omission: issuing invoices in Ghana is a regulated act, not a formatting exercise. See E8.
 
 ---
 
