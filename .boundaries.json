@@ -11,13 +11,15 @@
   "layers": {
     "contracts": {
       "path": "packages/contracts",
-      "purpose": "Shared DTOs, error envelope, ULID helpers, pagination cursors, and the closed sets whose values are product rules. Every shared shape is a Zod schema, so a boundary can validate rather than trust (ADR 0044). The only package both web and api may import. Zod is its one dependency; nothing else.",
+      "purpose": "Shared DTOs, error envelope, ULID helpers, pagination cursors, and the closed sets whose values are product rules. Every shared shape is a Zod schema, so a boundary can validate rather than trust (ADR 0044), and that schema is the single source the OpenAPI document is generated from (ADR 0045). The only package both web and api may import. Zod is its one dependency; nothing else. The DTO classes that adapt these schemas to Nest live in apps/api, which is why nestjs-zod and @nestjs/swagger are forbidden here: a DTO class in this package would put Nest into the browser bundle.",
       "mayImport": [],
       "forbiddenExternals": [
         "next",
         "react",
         "@nestjs/common",
         "@nestjs/core",
+        "@nestjs/swagger",
+        "nestjs-zod",
         "drizzle-orm",
         "prisma",
         "pg"

@@ -117,6 +117,13 @@ jobs:
       - name: G6 invariant coverage
         run: python tools/check_invariant_coverage.py
 
+      # G10, second half - no endpoint is undocumented. ADR 0015 always claimed this and
+      # nothing enforced it; ADR 0045 makes it real. Reads the spec regenerated above, so
+      # it judges what the code produces rather than what a decorator looks like.
+      - name: G10 OpenAPI spec is complete
+        if: steps.ws.outputs.ready == 'yes' && hashFiles('apps/api/openapi.json') != ''
+        run: python tools/check_openapi_complete.py
+
       # G13 - design token contrast. Palette regressions are silent otherwise, and
       # this product is read outdoors on mid-range phones.
       - name: G13 design token contrast
@@ -193,6 +200,16 @@ jobs:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/convert_test
           DATABASE_URL_APP: postgres://convert_app:ci-throwaway@localhost:5432/convert_test
         run: pnpm --filter @convert/infra assert:rls
+
+      # G7 - the column conventions of ADR 0046, read from the catalogue rather than from a
+      # reviewer's memory: money as integer pesewas in bigint and never numeric or a float,
+      # rates as integer basis points, every timestamp timestamptz, created_at everywhere,
+      # updated_at exactly where UPDATE is granted, and soft delete confined to media_asset.
+      # Runs without migrations and says plainly that an empty schema proves nothing.
+      - name: G7 assert column conventions
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/convert_test
+        run: pnpm --filter @convert/infra assert:conventions
 
       # G8 - integration tests against the real thing, never a mock database.
       - name: G8 integration tests

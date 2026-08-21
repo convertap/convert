@@ -15,6 +15,23 @@ import {
 import { UseCaseError } from '@convert/application';
 
 /**
+ * Nest's own exceptions arrive as a status with no code, so the status is all there is to
+ * map on. Kept as a table rather than a chain of conditionals: the pairs are data, and a
+ * reader can see which statuses are recognised without tracing a branch.
+ *
+ * Anything not listed falls back by class — 5xx is ours, everything else is the caller's.
+ */
+const CODE_BY_HTTP_STATUS: Readonly<Partial<Record<number, ErrorCode>>> = {
+  401: 'unauthenticated',
+  403: 'forbidden',
+  404: 'not_found',
+  429: 'rate_limited',
+};
+
+const codeForHttpStatus = (status: number): ErrorCode =>
+  CODE_BY_HTTP_STATUS[status] ?? (status >= 500 ? 'internal_error' : 'validation_failed');
+
+/**
  * The single place transport meets failure. Every error becomes the one envelope, and the
  * mapping from code to status lives in @convert/contracts rather than being restated per
  * controller (ADR 0018).
@@ -66,19 +83,7 @@ export class ErrorFilter implements ExceptionFilter {
 
     if (exception instanceof HttpException) {
       const status = exception.getStatus();
-      const code: ErrorCode =
-        status === 401
-          ? 'unauthenticated'
-          : status === 403
-            ? 'forbidden'
-            : status === 404
-              ? 'not_found'
-              : status === 429
-                ? 'rate_limited'
-                : status >= 500
-                  ? 'internal_error'
-                  : 'validation_failed';
-      return { code, message: exception.message, status };
+      return { code: codeForHttpStatus(status), message: exception.message, status };
     }
 
     // Anything unrecognised is ours until proven otherwise, and the detail stays in the

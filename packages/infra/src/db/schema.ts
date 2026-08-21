@@ -29,7 +29,25 @@ import {
  *   - a ULID primary key in a `uuid` column, supplied by the application, no default
  *     (ADR 0043, invariant I12)
  *   - for activity and consent, revoked UPDATE and DELETE (ADR 0009, invariant I6)
- * Gate G7 asserts the RLS half of that automatically.
+ *
+ * And the column conventions that repeat on every table (ADR 0046), so no table invents
+ * its own:
+ *   - money is `bigint` pesewas in a column named `*_pesewas`, read as a JS bigint, never
+ *     `mode: 'number'`. There is no currency column: I8 fixes it to GHS
+ *   - rates are integer basis points in a column named `*_bp`. VAT is 1500, not 15.00
+ *   - no column is numeric, decimal, money, real or double precision, anywhere
+ *   - every timestamp is `timestamptz`. No `date` columns: a due point is an instant (I11)
+ *   - `created_at` on every table, not null. Redundant with the ULID's own timestamp, and
+ *     worth it, because only application code can read that out of a `uuid` column
+ *   - `updated_at` if and only if the table accepts UPDATE. On an insert-only table it is
+ *     a column that can never change, which a reader would wrongly trust
+ *   - `deleted_at` on media_asset alone. Soft delete everywhere means every query carries a
+ *     second mandatory predicate, and the one that forgets it leaks rather than errors
+ *   - member deactivation is `deactivated_at`, deliberately not `deleted_at`: it is a
+ *     reversible domain state with rules (I7), not an absence
+ *
+ * Gate G7 asserts the RLS half automatically, and `assert:conventions` asserts the column
+ * half. Both run without migrations and both say so when there is nothing to check.
  */
 /**
  * Closed sets whose values are product rules become native Postgres enums (ADR 0044).
