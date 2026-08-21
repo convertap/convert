@@ -1,9 +1,9 @@
 # ADR 0004 - ULID external identifiers
 
-**Status:** Proposed
+**Status:** Superseded
 **Date:** 2026-08-18
 **Supersedes:** -
-**Superseded by:** -
+**Superseded by:** 0043
 
 ## Context
 

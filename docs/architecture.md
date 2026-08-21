@@ -245,7 +245,7 @@ these requires an ADR that supersedes its source.
 | I9 | A marketing message requires a live `consent` row for that channel at send time (L3, E4.2) | — |
 | I10 | A free-form WhatsApp message requires an open conversation window; otherwise only a template may be sent (§10.3) | — |
 | I11 | All timestamps stored UTC; all display and all "due"/"overdue" arithmetic in Africa/Accra (R6) | — |
-| I12 | Every entity exposes an opaque external ULID; internal integer keys never leave the process (R9) | — |
+| I12 | Every entity's **primary key** is a ULID in a `uuid` column, supplied by the application. There is no internal identifier, so none can leak (R9) | 0043 |
 
 The 21 August session also created invariants the numbering does not yet cover, because they belong
 to entities that scope did not previously include. They are listed here so they are not lost, and

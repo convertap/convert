@@ -16,14 +16,24 @@ import { pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
  * When they land, each tenant table must arrive with, in the same migration:
  *   - workspace_id not null, referencing workspace
  *   - ENABLE ROW LEVEL SECURITY plus a policy on workspace_id  (ADR 0002, invariant I1)
- *   - a ULID external id column                          (ADR 0004, invariant I12)
+ *   - a ULID primary key in a `uuid` column, supplied by the application, no default
+ *     (ADR 0043, invariant I12)
  *   - for activity and consent, revoked UPDATE and DELETE (ADR 0009, invariant I6)
  * Gate G7 asserts the RLS half of that automatically.
  */
 export const workspace = pgTable('workspace', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  /** Opaque external identifier. Integer and uuid keys never leave the process. */
-  externalId: text('external_id').notNull().unique(),
+  /**
+   * The ULID, and the only identifier (ADR 0043). Stored in a `uuid` column because a
+   * ULID is exactly 128 bits and so is a uuid: 16 fixed-width bytes, native indexing,
+   * and the same sort order, where text would cost 26 bytes on every key and every
+   * foreign key. Convert with `ulidToUuid` / `uuidToUlid` from @convert/contracts.
+   *
+   * No `defaultRandom()`, deliberately. The application supplies the id, because the
+   * outbox pattern needs it before the insert (ADR 0011). A row inserted by hand then
+   * fails loudly on the not-null constraint instead of quietly receiving an id the
+   * outbox never saw.
+   */
+  id: uuid('id').primaryKey(),
   name: text('name').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
