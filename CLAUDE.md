@@ -13,7 +13,8 @@ Mobile-first sales & lead management platform for Ghanaian SMEs. The workspace a
 7. **`docs/error-handling.md`**. Errors are first class (ADR 0018): one catalogue carrying status, retryability, and the sentence a person reads. Layers below the API throw without logging.
 8. **`docs/design-system.md`**. Shadcn primitives, Convert token tiers, domain tokens for stage/channel/status/window, accessibility and performance rules (ADR 0016).
 9. **`docs/notion-workspace.md`**. Stakeholder-facing Notion workspace: structure, the backlog, sprints and decisions databases, which system owns which fact, and the mirror pipeline (§9).
-10. `C:\Users\SolomonAboagye\Downloads\Convert_Pitch_Deck.pptx`, original source. 12 slides.
+10. **`docs/deployment-runbook.md`**. The Railway variables each environment needs, what the pre-deploy phase runs, the forward-only migration rules, and rollback. Read it before touching `apps/*/railway.json` or writing a migration that has already run remotely.
+11. `C:\Users\SolomonAboagye\Downloads\Convert_Pitch_Deck.pptx`, original source. 12 slides.
 
 Do not resolve a scope conflict yourself. If the two docs disagree on something not already in `product-spec.md` §13, add it there and flag it.
 
