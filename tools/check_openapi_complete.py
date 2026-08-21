@@ -89,7 +89,11 @@ def main() -> int:
     paths = spec.get("paths") or {}
 
     if not paths:
-        # Not a pass. An empty spec satisfies every rule below and proves nothing.
+        # A pass, and a hollow one: an empty spec satisfies every rule below without
+        # containing anything. It exits 0 so the gate does not block a repository that
+        # has no endpoints yet, and says so on stdout so the green tick is not read as
+        # evidence. Once an endpoint exists this branch is unreachable, and a spec that
+        # loses its paths fails on the regeneration diff in the step before this one.
         print("G10: openapi.json documents no paths. Nothing to check, so nothing is proven.")
         return 0
 

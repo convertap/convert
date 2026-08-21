@@ -105,6 +105,8 @@ this is why the user id rides in the token. The GUC is set from that claim *befo
 is safe because a policy can only narrow what a query sees and the presented secret still has to
 hash-match. A forged user id buys a scoped view of rows the holder cannot authenticate against.
 
+**That argument only holds under two conditions, so both are part of the decision.** First, the setting is transaction-scoped: `BEGIN` then `SET LOCAL app.current_user`, never a bare `SET`. The api runs on a connection pool, and a plain `SET` outlives the request — so a forged id from a refresh attempt that failed would still be the current identity for whatever request next borrows that connection, which converts a narrowing policy into an attacker-chosen one. Second, the session lookup is the *only* identity-table statement permitted before the secret hash-matches. Any other read or write in that window runs under an identity nobody has proven, and the narrowing argument says nothing about a statement whose results the attacker gets to keep. Both conditions are properties of the refresh code path rather than of the schema, which is exactly why they are written here — the schema cannot enforce them and a reviewer will not infer them.
+
 **Identity tables get their own list, `IDENTITY_TABLES`, and never join `TENANT_TABLES`.** G7 asserts
 that every name in `TENANT_TABLES` has a `workspace_id` policy. Adding `session` to it would make a
 passing gate assert something false, which is worse than a gate that does not cover the table at all.
@@ -203,3 +205,4 @@ rather than this record.
   deliberately *not* added now: an assertion over zero tables proves nothing, and adding one would
   make a fourth vacuous gate in a repository that counts them.
 - **A test that a replayed generation revokes the family**, not the presented token.
+- **A test that the refresh path sets `app.current_user` with `SET LOCAL` inside a transaction**, and that the setting does not survive the transaction. This is the condition the paragraph above depends on, and a bare `SET` would look identical in review.

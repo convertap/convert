@@ -48,6 +48,8 @@ Reviewers: skip any section the diff does not touch. Do not skip §1.
 ## 5. API changes
 
 - [ ] `openapi.json` regenerated and committed in the same commit (G10).
+The next three apply from the commit that lands `nestjs-zod`, which has not happened yet — ADR 0045 is a decision, and `apps/api` carries no DTO classes, no pipe and no `cleanupOpenApiDoc` today. They are listed now so the commit that introduces the pattern is reviewed against them rather than after them.
+
 - [ ] Every wire shape is a Zod schema in `contracts`; the api-side DTO class is `createZodDto(schema)` with an empty body (ADR 0045). A DTO that adds a field means the schema is wrong.
 - [ ] Responses use `@ZodResponse`, not `@ApiOkResponse` — the latter documents the *input* shape of a transforming schema, silently (ADR 0045).
 - [ ] `cleanupOpenApiDoc` still wraps the document. Without it the spec generates, looks plausible, and is wrong.

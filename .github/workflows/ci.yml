@@ -121,7 +121,9 @@ jobs:
       # nothing enforced it; ADR 0045 makes it real. Reads the spec regenerated above, so
       # it judges what the code produces rather than what a decorator looks like.
       - name: G10 OpenAPI spec is complete
-        if: steps.ws.outputs.ready == 'yes' && hashFiles('apps/api/openapi.json') != ''
+        # No hashFiles guard: a missing spec must fail this step, not skip it. The
+        # script reports the absence itself, which a skipped step never would.
+        if: steps.ws.outputs.ready == 'yes'
         run: python tools/check_openapi_complete.py
 
       # G13 - design token contrast. Palette regressions are silent otherwise, and

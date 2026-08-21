@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import { sql } from 'drizzle-orm';
 import { createDatabase } from '../src/db/client';
 
@@ -13,6 +16,12 @@ import { createDatabase } from '../src/db/client';
  *   TIMESTAMP without a zone       an instant that means nothing without knowing who wrote it
  *   updated_at on an insert-only   a column that can never change, inviting a reader to trust it
  *   deleted_at spreading           a second mandatory predicate; the query that forgets leaks
+ *   bigint read as a JS number     silent truncation past 2^53, which no catalogue can see
+ *
+ * The last one is why this file also reads the Drizzle source. `mode: 'bigint'` and
+ * `mode: 'number'` produce the same Postgres bigint column, so information_schema cannot
+ * tell them apart - the difference exists only in TypeScript, and it is the difference
+ * between exact money and money that starts rounding.
  *
  * It reads the catalogue as the OWNER, because that is the role that can see everything.
  * Privileges are read with has_table_privilege against convert_app, the role the
@@ -95,6 +104,13 @@ const main = async () => {
         `${at(column)}: is timestamp without time zone. All timestamps are stored UTC as timestamptz (I11)`,
       );
     }
+    // A due point is an instant, not a day. A date column forces a time to be invented at
+    // read, and the worker sweeps every five minutes (ADR 0046).
+    if (column.data_type === 'date') {
+      failures.push(
+        `${at(column)}: is date. There are no date columns - a due point is a timestamptz instant (ADR 0046)`,
+      );
+    }
 
     // ---- deletion ----
     if (column.column_name === 'deleted_at' && !SOFT_DELETE_ALLOWED.has(column.table_name)) {
@@ -160,6 +176,26 @@ const main = async () => {
     if (!canUpdate && hasUpdatedAt) {
       failures.push(
         `${table}: UPDATE is revoked but it carries updated_at, a column that can never change. Insert-only tables correct by appending, not by editing (I6)`,
+      );
+    }
+  }
+
+  // ---- the one rule the catalogue cannot see ----
+  // Both Drizzle modes emit `bigint`, so this is a source check or it is nothing. ADR 0046
+  // bans `mode: 'number'` outright rather than only on money columns: the truncation is
+  // silent whatever the column is named.
+  const schemaPath = resolve(__dirname, '../src/db/schema.ts');
+  const schemaSource = readFileSync(schemaPath, 'utf8');
+  for (const [index, line] of schemaSource.split('\n').entries()) {
+    const code = line.replace(/\/\/.*$/, '').replace(/\*.*$/, '');
+    if (!/\bbigint\s*\(/.test(code)) continue;
+    if (/mode:\s*'number'/.test(code)) {
+      failures.push(
+        `schema.ts:${index + 1}: bigint with mode: 'number' truncates silently past 2^53. Use mode: 'bigint' (ADR 0046)`,
+      );
+    } else if (!/mode:\s*'bigint'/.test(code)) {
+      failures.push(
+        `schema.ts:${index + 1}: bigint without an explicit mode defaults to a lossy read. Pass mode: 'bigint' (ADR 0046)`,
       );
     }
   }
