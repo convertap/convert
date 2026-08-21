@@ -28,3 +28,5 @@ What we will do, in the present tense and specific enough to be violated. "Use P
 How a violation gets caught: a CI gate, a rule in `.boundaries.json`, an invariant test, or a line on the review checklist. Name it.
 
 A decision with no enforcement mechanism is a preference, and preferences decay.
+
+**Describe the repository as it is today, not as it will be** (ADR 0048). If nothing enforces this yet, write that, and name what will. "Nothing yet" is a valid and preferred answer; a gate named because it sounds relevant is not, and it is worse than nothing because it reads as covered. Where the rule applies to specific code, name the lines — "both composition roots read `DATABASE_URL_APP` and refuse to boot without it" can be checked in a minute; "G7 covers the database roles" cannot.
