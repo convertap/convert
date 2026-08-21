@@ -8,6 +8,9 @@ on:
     branches: [main, develop]
   pull_request:
 
+permissions:
+  contents: read
+
 # Gates G1-G13 from docs/engineering-guardrails.md §3.
 # Every job is written to pass on an empty repository and tighten automatically as
 # the code it guards lands. A pipeline that is red from day one gets disabled.
@@ -52,15 +55,12 @@ jobs:
       # public the moment it lands. Runs on history, not just the diff, because a
       # rewritten branch can carry an older commit in.
       - name: G14 secret scan
-        env:
-          # Nothing may stop to ask a question on a runner with no terminal.
-          DEBIAN_FRONTEND: noninteractive
         run: |
-          curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | sudo -E bash
-          # The runner runs its own background upgrades, which hold the dpkg lock.
-          # apt waits on it forever by default, which reads as a hung job rather
-          # than a slow one. Queue for three minutes, then fail for real (ADR 0023).
-          sudo apt-get install -y -o DPkg::Lock::Timeout=180 infisical
+          archive=cli_0.43.124_linux_amd64.tar.gz
+          curl -fsSLo "/tmp/$archive" "https://github.com/Infisical/cli/releases/download/v0.43.124/$archive"
+          echo "675ae9293a7a089fb63d95eb9189dca181c95e4fe3cf376a6da7e5f9093850d6  /tmp/$archive" | sha256sum --check
+          tar -xzf "/tmp/$archive" -C /tmp
+          sudo install -m 0755 /tmp/infisical /usr/local/bin/infisical
           # --redact matters on a public repository: without it a detected secret
           # gets printed into a world-readable build log, which is the leak.
           infisical scan --redact --exit-code=1
@@ -218,6 +218,7 @@ jobs:
         if: steps.mig.outputs.ready == 'yes'
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/convert_test
+          DATABASE_URL_APP: postgres://convert_app:ci-throwaway@localhost:5432/convert_test
         run: pnpm test:integration
 
   performance:
@@ -248,7 +249,7 @@ jobs:
           # turbo builds the workspace packages first; next build type-checks against
           # their declarations, so a filtered build alone fails on a clean checkout.
           pnpm build
-          pnpm dlx @lhci/cli autorun --config=./lighthouserc.json
+          pnpm dlx @lhci/cli@0.15.1 autorun --config=./lighthouserc.json
 
   # ---------------------------------------------------------------- deployment
   #
@@ -293,13 +294,16 @@ jobs:
       && vars.DEPLOY_TEST == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      deployments: write
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: api
             service: '@convert/api'
-            probe: https://convertapi-test.up.railway.app/health
+            probe: https://convertapi-test.up.railway.app/ready
           - name: web
             service: '@convert/web'
             probe: https://convertweb-test.up.railway.app/
@@ -347,13 +351,16 @@ jobs:
       && vars.DEPLOY_STAGING == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      deployments: write
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: api
             service: '@convert/api'
-            probe: https://convertapi-production.up.railway.app/health
+            probe: https://convertapi-production.up.railway.app/ready
           - name: web
             service: '@convert/web'
             probe: https://convertweb-production.up.railway.app/

@@ -7,9 +7,11 @@
  */
 export const CLOCK = Symbol('Clock');
 export const DATABASE = Symbol('Database');
+export const DATABASE_READINESS = Symbol('DatabaseReadiness');
 export const MESSAGE_SENDER = Symbol('MessageSender');
 export const CONTACT_REPOSITORY = Symbol('ContactRepository');
 export const ACTIVITY_REPOSITORY = Symbol('ActivityRepository');
 export const OUTBOX_REPOSITORY = Symbol('OutboxRepository');
+export const MESSAGE_DELIVERY_REPOSITORY = Symbol('MessageDeliveryRepository');
 export const TEMPLATE_CATALOG = Symbol('TemplateCatalog');
 export const CONSENT_GATE = Symbol('ConsentGate');

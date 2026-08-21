@@ -6,13 +6,9 @@ import {
   Logger,
 } from '@nestjs/common';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import {
-  type ErrorCode,
-  type ErrorEnvelope,
-  httpStatusFor,
-  isOurFault,
-} from '@convert/contracts';
+import { type ErrorCode, type ErrorEnvelope, httpStatusFor, isOurFault } from '@convert/contracts';
 import { UseCaseError } from '@convert/application';
+import { ZodSerializationException, ZodValidationException } from 'nestjs-zod';
 
 /**
  * Nest's own exceptions arrive as a status with no code, so the status is all there is to
@@ -50,8 +46,10 @@ export class ErrorFilter implements ExceptionFilter {
     const reply = http.getResponse<FastifyReply>();
     const requestId = request.id;
 
-    const { code, message, status } = this.classify(exception);
-    const envelope: ErrorEnvelope = { code, message, requestId };
+    const { code, message, status, details } = this.classify(exception);
+    const envelope: ErrorEnvelope = details
+      ? { code, message, requestId, details }
+      : { code, message, requestId };
 
     // Logged once, here, at the boundary. Layers below throw; they do not also log, or
     // one failure appears four times and none of them is the whole story.
@@ -72,7 +70,36 @@ export class ErrorFilter implements ExceptionFilter {
     void reply.status(status).send(envelope);
   }
 
-  private classify(exception: unknown): { code: ErrorCode; message: string; status: number } {
+  private classify(exception: unknown): {
+    code: ErrorCode;
+    message: string;
+    status: number;
+    details?: ErrorEnvelope['details'];
+  } {
+    if (exception instanceof ZodValidationException) {
+      const error = exception.getZodError();
+      const details =
+        typeof error === 'object' &&
+        error !== null &&
+        'issues' in error &&
+        Array.isArray(error.issues)
+          ? error.issues.map((issue: { path: PropertyKey[]; message: string }) => ({
+              field: issue.path.join('.') || 'request',
+              message: issue.message,
+            }))
+          : undefined;
+      return {
+        code: 'validation_failed',
+        message: 'request validation failed',
+        status: 400,
+        ...(details ? { details } : {}),
+      };
+    }
+
+    if (exception instanceof ZodSerializationException) {
+      return { code: 'internal_error', message: 'response validation failed', status: 500 };
+    }
+
     if (exception instanceof UseCaseError) {
       return {
         code: exception.code,

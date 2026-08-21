@@ -1,12 +1,11 @@
 import type { Ulid } from '@convert/contracts';
 import {
-  type ActivityRepository,
   type Clock,
   type ConsentGate,
   type ContactRepository,
   type MessageChannel,
+  type MessageDeliveryRepository,
   type MessageSender,
-  type OutboxRepository,
   type Principal,
   type SendResult,
   type TemplateCatalog,
@@ -34,8 +33,7 @@ import { UseCaseError, forbidden, notFound } from '../errors';
  */
 export interface SendTemplateMessageDeps {
   readonly contacts: ContactRepository;
-  readonly activities: ActivityRepository;
-  readonly outbox: OutboxRepository;
+  readonly deliveries: MessageDeliveryRepository;
   readonly templates: TemplateCatalog;
   readonly consent: ConsentGate;
   readonly sender: MessageSender;
@@ -79,7 +77,10 @@ export const sendTemplateMessage = async (
 
   const missing = template.variables.filter((name) => input.variables[name] === undefined);
   if (missing.length > 0) {
-    throw new UseCaseError('validation_failed', `missing template variables: ${missing.join(', ')}`);
+    throw new UseCaseError(
+      'validation_failed',
+      `missing template variables: ${missing.join(', ')}`,
+    );
   }
 
   if (requiresConsent(template.category)) {
@@ -108,19 +109,24 @@ export const sendTemplateMessage = async (
     idempotencyKey: input.idempotencyKey,
   });
 
-  await deps.activities.append(principal.workspaceId, {
-    type: input.channel === 'whatsapp' ? 'whatsapp' : 'sms',
-    subject: { kind: 'contact', id: contact.id },
-    actor: principalLabel(principal),
-    occurredAt: deps.clock.now(),
-    note: `template ${template.name} sent (window ${window})`,
-  });
-
-  await deps.outbox.publish(principal.workspaceId, 'message.sent', {
-    contactId: contact.id,
-    channel: input.channel,
-    templateName: template.name,
-    providerMessageId: result.providerMessageId,
+  await deps.deliveries.record(principal.workspaceId, {
+    activity: {
+      type: input.channel === 'whatsapp' ? 'whatsapp' : 'sms',
+      subject: { kind: 'contact', id: contact.id },
+      actor: principalLabel(principal),
+      occurredAt: deps.clock.now(),
+      note: `template ${template.name} sent (window ${window})`,
+    },
+    event: {
+      type: 'message.sent',
+      payload: {
+        contactId: contact.id,
+        channel: input.channel,
+        templateName: template.name,
+        providerMessageId: result.providerMessageId,
+        idempotencyKey: input.idempotencyKey,
+      },
+    },
   });
 
   return result;

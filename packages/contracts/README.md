@@ -1,6 +1,6 @@
 # `contracts` — packages/contracts
 
-Shared DTOs, error envelope, ULID helpers, pagination cursors. The only package both web and api may import. Depends on nothing.
+Shared DTOs, error envelope, ULID helpers, pagination cursors. The only package both web and api may import. Depends only on Zod.
 
 ## Import rules
 

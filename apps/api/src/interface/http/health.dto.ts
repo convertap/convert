@@ -1,21 +1,13 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { healthResponseSchema, readinessResponseSchema } from '@convert/contracts';
+import { createZodDto } from 'nestjs-zod';
 
 /**
  * Every DTO carries an example (ADR 0015). A spec with types but no examples is half a
  * document, and gate G10 fails an endpoint with no typed response.
  *
- * Note the explicit `type` on every property. The generator runs under tsx/esbuild, which
- * does not emit decorator metadata, so Swagger cannot infer property types by reflection.
- * Declaring them is also the more honest option: the spec then says what we meant rather
- * than what a transpiler happened to record.
+ * The classes contain no fields by design. Runtime validation, TypeScript output and
+ * OpenAPI all derive from the shared Zod schemas, so this adapter cannot drift from them.
  */
-export class HealthResponse {
-  @ApiProperty({ type: String, enum: ['ok'], example: 'ok' })
-  status!: 'ok';
+export class HealthResponseDto extends createZodDto(healthResponseSchema) {}
 
-  @ApiProperty({ type: String, format: 'date-time', example: '2026-08-18T12:00:00.000Z' })
-  time!: string;
-
-  @ApiProperty({ type: String, example: '0.0.0' })
-  version!: string;
-}
+export class ReadinessResponseDto extends createZodDto(readinessResponseSchema) {}

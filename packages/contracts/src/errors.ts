@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 /**
  * Errors are a first-class part of this product, not an afterthought at the end of a
  * happy path.
@@ -38,19 +40,24 @@ export const ERROR_CODES = [
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
-export interface FieldError {
-  readonly field: string;
-  readonly message: string;
-}
+export const fieldErrorSchema = z
+  .object({
+    field: z.string().meta({ example: 'phone' }),
+    message: z.string().meta({ example: 'not a valid Ghanaian phone number' }),
+  })
+  .meta({ id: 'FieldError' });
 
-export interface ErrorEnvelope {
-  readonly code: ErrorCode;
-  /** Technical summary. Safe to log, not necessarily what a user should read. */
-  readonly message: string;
-  readonly details?: readonly FieldError[];
-  /** Correlates a support conversation with server logs and traces. Always present in API responses. */
-  readonly requestId?: string;
-}
+export const errorEnvelopeSchema = z
+  .object({
+    code: z.enum(ERROR_CODES).meta({ example: 'conversation_window_closed' }),
+    message: z.string().meta({ example: 'free-form send refused: conversation window closed' }),
+    details: z.array(fieldErrorSchema).optional(),
+    requestId: z.string().optional().meta({ example: 'req-01JBQZ3K7X8V9WQ0R1S2T3V4W5' }),
+  })
+  .meta({ id: 'ErrorEnvelope' });
+
+export type FieldError = z.infer<typeof fieldErrorSchema>;
+export type ErrorEnvelope = z.infer<typeof errorEnvelopeSchema>;
 
 export interface ErrorDefinition {
   readonly status: number;
@@ -128,7 +135,8 @@ export const CATALOGUE: Readonly<Record<ErrorCode, ErrorDefinition>> = {
   entitlement_exceeded: {
     status: 402,
     retryable: false,
-    userMessage: 'Your plan limit for this has been reached. Upgrade or wait for the monthly reset.',
+    userMessage:
+      'Your plan limit for this has been reached. Upgrade or wait for the monthly reset.',
     ourFault: false,
   },
   rate_limited: {
@@ -170,7 +178,7 @@ export const errorEnvelope = (
   code: ErrorCode,
   message: string,
   details?: readonly FieldError[],
-): ErrorEnvelope => (details ? { code, message, details } : { code, message });
+): ErrorEnvelope => (details ? { code, message, details: [...details] } : { code, message });
 
 export const httpStatusFor = (code: ErrorCode): number => CATALOGUE[code].status;
 export const isRetryable = (code: ErrorCode): boolean => CATALOGUE[code].retryable;
@@ -184,11 +192,5 @@ export const userMessageFor = (code: ErrorCode): string => CATALOGUE[code].userM
 
 /** Type guard for a value that came back over the wire. */
 export const isErrorEnvelope = (value: unknown): value is ErrorEnvelope => {
-  if (typeof value !== 'object' || value === null) return false;
-  const candidate = value as { code?: unknown; message?: unknown };
-  return (
-    typeof candidate.message === 'string' &&
-    typeof candidate.code === 'string' &&
-    (ERROR_CODES as readonly string[]).includes(candidate.code)
-  );
+  return errorEnvelopeSchema.safeParse(value).success;
 };

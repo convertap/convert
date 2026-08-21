@@ -8,7 +8,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --project unit"
+    "test": "pnpm --dir ../.. exec vitest run --project apps apps/worker/src"
   },
   "dependencies": {
     "@convert/application": "workspace:*",

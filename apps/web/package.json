@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --project unit"
+    "test": "pnpm --dir ../.. exec vitest run --project apps apps/web/src --passWithNoTests"
   },
   "dependencies": {
     "@convert/contracts": "workspace:*",

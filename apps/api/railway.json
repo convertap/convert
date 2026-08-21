@@ -11,8 +11,12 @@
     ]
   },
   "deploy": {
+    "preDeployCommand": [
+      "pnpm --filter @convert/infra bootstrap",
+      "pnpm --filter @convert/infra migrate"
+    ],
     "startCommand": "pnpm --filter @convert/api start",
-    "healthcheckPath": "/health",
+    "healthcheckPath": "/ready",
     "healthcheckTimeout": 30,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 3

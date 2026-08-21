@@ -24,6 +24,11 @@ export const createDatabase = (connectionString: string) => {
   return drizzle(pool, { schema });
 };
 
+/** A real query for readiness checks. Constructing a pg Pool is lazy and proves nothing. */
+export const probeDatabase = async (db: Database): Promise<void> => {
+  await db.execute(sql`select 1`);
+};
+
 /**
  * Runs `fn` inside a transaction whose workspace context is set for its duration.
  * SET LOCAL is scoped to the transaction, so it cannot outlive it or leak to the next

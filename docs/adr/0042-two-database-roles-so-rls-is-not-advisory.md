@@ -73,7 +73,7 @@ Migrations now need the owner credential in production, so a deploy carries two 
 
 ## Enforcement
 
-- **G7**, extended and ungated: `assert:rls` fails if the application role is superuser or `BYPASSRLS`, if a declared tenant table is owned by it without FORCE, or if `DATABASE_URL_APP` is absent.
+- **G7**, extended and ungated: `assert:rls` fails if the application role is superuser or `BYPASSRLS`, if a declared tenant table is owned by it without FORCE, if `DATABASE_URL_APP` is absent, or if any public table is not classified in exactly one of `TENANT_TABLES` and `NON_TENANT_TABLES`. **That last check proves nothing today** (ADR 0048): with no migrations there are no public tables, so the loop has nothing to iterate. It also only checks one direction — a table in the database that is in neither list fails, while a name in `NON_TENANT_TABLES` with no table behind it passes. It becomes real with the first migration.
 - **Both composition roots read `DATABASE_URL_APP` and refuse to boot without it**, with no
   fallback to `DATABASE_URL`, and a unit test per runtime holds that shut. Added 21 August 2026
   after review found `apps/api` and `apps/worker` both reading the owner's credential — this
@@ -82,5 +82,6 @@ Migrations now need the owner credential in production, so a deploy carries two 
   a throw, because a fallback there would boot cleanly, answer every query, and leave tenant
   isolation off while G7 still passed. Verified by reintroducing the fallback and watching it
   fail.
-- **`bootstrap.ts` asserts the attributes it just created** rather than trusting the SQL ran as written. A role created with the wrong attributes is worse than no role, because everything downstream looks correct.
-- The outstanding human step — repointing Railway's `DATABASE_URL` and adding `DATABASE_URL_APP` in both environments — is recorded on the *Provision an application role that RLS actually applies to* ticket and in `HANDOFF.md` §4. It is not done, and nothing here pretends otherwise.
+- **`bootstrap.ts` asserts the attributes it just created** rather than trusting the SQL ran as written. Its password context and DDL execute in one transaction, as do every context-dependent query in `assert-rls.ts`, so a pool cannot move the second statement to another connection.
+- **`apps/api/railway.json` runs bootstrap and migrations as pre-deploy commands** and Railway probes `/ready`, which performs a query through `DATABASE_URL_APP`, before switching traffic.
+- The outstanding human step is provisioning `APP_DB_PASSWORD` and `DATABASE_URL_APP` in both Railway environments. `DATABASE_URL` remains the owner credential for pre-deploy DDL. The step is recorded in `HANDOFF.md` §4 and `docs/deployment-runbook.md`; it is not done from this repository.
