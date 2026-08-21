@@ -14,7 +14,7 @@ import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 
 if (!existsSync('.git')) {
-  console.log('prepare: no .git directory, skipping git hook install');
+  console.warn('prepare: no .git directory, skipping git hook install');
   process.exit(0);
 }
 
