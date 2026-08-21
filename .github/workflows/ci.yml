@@ -157,6 +157,13 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # The db scripts import @convert/contracts, which resolves to its build output, so
+      # the workspace packages must exist before bootstrap runs. Installing is not enough,
+      # and the failure presents as module-not-found deep inside a script rather than as
+      # anything resembling a build problem (ADR 0044 put the closed sets in contracts).
+      - name: Build workspace packages
+        run: pnpm build
+
       # G7 - migrations apply to an empty database, and every tenant table has RLS that
       # the application role is actually SUBJECT to.
       #

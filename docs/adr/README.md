@@ -45,6 +45,7 @@ One file per decision. Numbered, immutable once accepted, superseded rather than
 | [0041](./0041-decision-records-are-not-rewritten-when-vocabulary-changes.md) | Decision records are not rewritten when vocabulary changes | Accepted |
 | [0042](./0042-two-database-roles-so-rls-is-not-advisory.md) | Two database roles, so row-level security is not advisory | Accepted |
 | [0043](./0043-the-ulid-is-the-primary-key.md) | The ULID is the primary key | Accepted |
+| [0044](./0044-closed-sets-are-enums-where-they-are-product-rules.md) | Closed sets are Postgres enums where they are product rules, and tables where a workspace configures them | Accepted |
 
 Statuses: **Proposed** (written, not yet ratified) · **Accepted** (in force) · **Superseded** (replaced, kept for the record) · **Rejected** (considered and declined, kept so it is not re-litigated).
 

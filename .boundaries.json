@@ -11,7 +11,7 @@
   "layers": {
     "contracts": {
       "path": "packages/contracts",
-      "purpose": "Shared DTOs, error envelope, ULID helpers, pagination cursors. The only package both web and api may import. Depends on nothing.",
+      "purpose": "Shared DTOs, error envelope, ULID helpers, pagination cursors, and the closed sets whose values are product rules. Every shared shape is a Zod schema, so a boundary can validate rather than trust (ADR 0044). The only package both web and api may import. Zod is its one dependency; nothing else.",
       "mayImport": [],
       "forbiddenExternals": [
         "next",
