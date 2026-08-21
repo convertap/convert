@@ -1,7 +1,7 @@
-import { Global, Module } from '@nestjs/common';
+import { Global, Inject, Injectable, Module } from '@nestjs/common';
 import type { Clock } from '@convert/core';
-import { createDatabase, createWhatsAppSender } from '@convert/infra';
-import { CLOCK, DATABASE, MESSAGE_SENDER } from './tokens';
+import { createDatabase, createWhatsAppSender, probeDatabase, type Database } from '@convert/infra';
+import { CLOCK, DATABASE, DATABASE_READINESS, MESSAGE_SENDER } from './tokens';
 
 /**
  * The composition root. This is the ONLY place in apps/api permitted to import
@@ -13,6 +13,18 @@ import { CLOCK, DATABASE, MESSAGE_SENDER } from './tokens';
  */
 const systemClock: Clock = { now: () => new Date() };
 
+export interface DatabaseReadiness {
+  check(): Promise<void>;
+}
+
+@Injectable()
+class PostgresReadiness implements DatabaseReadiness {
+  constructor(@Inject(DATABASE) private readonly db: Database) {}
+
+  check(): Promise<void> {
+    return probeDatabase(this.db);
+  }
+}
 
 /**
  * The connection string a runtime is allowed to use: `DATABASE_URL_APP`, never
@@ -48,8 +60,9 @@ export const applicationDatabaseUrl = (env: NodeJS.ProcessEnv): string => {
         return createDatabase(applicationDatabaseUrl(process.env));
       },
     },
+    { provide: DATABASE_READINESS, useClass: PostgresReadiness },
     { provide: MESSAGE_SENDER, useFactory: () => createWhatsAppSender() },
   ],
-  exports: [CLOCK, DATABASE, MESSAGE_SENDER],
+  exports: [CLOCK, DATABASE, DATABASE_READINESS, MESSAGE_SENDER],
 })
 export class InfraModule {}

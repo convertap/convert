@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { createDatabase } from '../src/db/client';
-import { TENANT_TABLES } from '../src/db/schema';
+import { NON_TENANT_TABLES, TENANT_TABLES } from '../src/db/schema';
 
 /**
  * Gate G7, second half. Two assertions, and the second one is the one that matters.
@@ -48,7 +48,22 @@ const main = async () => {
   const rlsByTable = new Map(enabled.rows.map((r) => [r.tablename, r.rowsecurity]));
   const policyCount = new Map(policies.rows.map((r) => [r.tablename, Number(r.count)]));
   const declared = new Set(TENANT_TABLES);
+  const nonTenant = new Set(NON_TENANT_TABLES);
   const failures: string[] = [];
+
+  for (const table of declared) {
+    if (nonTenant.has(table)) {
+      failures.push(`${table}: listed in both TENANT_TABLES and NON_TENANT_TABLES`);
+    }
+  }
+
+  for (const row of enabled.rows) {
+    if (!declared.has(row.tablename) && !nonTenant.has(row.tablename)) {
+      failures.push(
+        `${row.tablename}: public table is not classified in TENANT_TABLES or NON_TENANT_TABLES`,
+      );
+    }
+  }
 
   for (const table of TENANT_TABLES) {
     if (!rlsByTable.has(table)) failures.push(`${table}: declared tenant table does not exist`);
@@ -171,37 +186,46 @@ const main = async () => {
       values (${A}::uuid, 'belongs to A'), (${B}::uuid, 'belongs to B')
     `);
 
-    const asApp = async (workspaceId: string | null) => {
-      if (workspaceId === null) {
-        await appDb.execute(sql`select set_config('app.current_workspace', '', false)`);
-      } else {
-        await appDb.execute(sql`select set_config('app.current_workspace', ${workspaceId}, false)`);
-      }
-      const rows = await appDb.execute<{ note: string }>(sql`select note from rls_probe`);
-      return rows.rows.map((r) => r.note).sort();
-    };
+    const asApp = async (workspaceId: string | null) =>
+      appDb.transaction(async (tx) => {
+        await tx.execute(
+          workspaceId === null
+            ? sql`select set_config('app.current_workspace', '', true)`
+            : sql`select set_config('app.current_workspace', ${workspaceId}, true)`,
+        );
+        const rows = await tx.execute<{ note: string }>(sql`select note from rls_probe`);
+        return rows.rows.map((r) => r.note).sort();
+      });
 
     const seenA = await asApp(A);
     if (seenA.length !== 1 || seenA[0] !== 'belongs to A') {
-      isolation.push(`workspace A context returned ${JSON.stringify(seenA)}, expected only A's row`);
+      isolation.push(
+        `workspace A context returned ${JSON.stringify(seenA)}, expected only A's row`,
+      );
     }
 
     const seenB = await asApp(B);
     if (seenB.length !== 1 || seenB[0] !== 'belongs to B') {
-      isolation.push(`workspace B context returned ${JSON.stringify(seenB)}, expected only B's row`);
+      isolation.push(
+        `workspace B context returned ${JSON.stringify(seenB)}, expected only B's row`,
+      );
     }
 
     // A forgotten context must leak nothing, rather than everything.
     const seenNone = await asApp(null);
     if (seenNone.length !== 0) {
-      isolation.push(`an empty workspace context returned ${JSON.stringify(seenNone)}, expected nothing`);
+      isolation.push(
+        `an empty workspace context returned ${JSON.stringify(seenNone)}, expected nothing`,
+      );
     }
 
     // And an explicit attempt to read across tenants must come back empty.
-    await appDb.execute(sql`select set_config('app.current_workspace', ${A}, false)`);
-    const cross = await appDb.execute<{ note: string }>(
-      sql`select note from rls_probe where workspace_id = ${B}::uuid`,
-    );
+    const cross = await appDb.transaction(async (tx) => {
+      await tx.execute(sql`select set_config('app.current_workspace', ${A}, true)`);
+      return tx.execute<{ note: string }>(
+        sql`select note from rls_probe where workspace_id = ${B}::uuid`,
+      );
+    });
     if (cross.rows.length !== 0) {
       isolation.push('an explicit cross-tenant query returned rows, so isolation is not holding');
     }

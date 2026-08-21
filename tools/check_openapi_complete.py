@@ -17,12 +17,10 @@ What it checks, and why each one:
   3. typed body       an untyped request body is an undocumented contract
   4. operationId      the generated client names its methods from this
   5. at least one tag ungrouped operations are unfindable in Swagger UI once there are 30
+  6. error envelope    every operation exposes the stable failure contract to consumers
 
 What it deliberately does NOT check yet, so that nobody reads a pass as more than it is:
 
-  - every operation documents a failure response against the error envelope. ADR 0015
-    requires it. It cannot be enforced until the envelope is a Zod-derived DTO that every
-    controller declares (ADR 0045), so it arrives with that change, not before.
   - every schema property carries an example. ADR 0015 requires it; enforcing it today
     would fail on array properties that legitimately carry their example on the item.
 """
@@ -37,6 +35,16 @@ SPEC = Path(__file__).resolve().parent.parent / "apps" / "api" / "openapi.json"
 
 # Anything else is a field of the path item (parameters, servers, $ref), not an operation.
 METHODS = ("get", "put", "post", "delete", "options", "head", "patch", "trace")
+
+
+def uses_error_envelope(response: dict) -> bool:
+    content = response.get("content") or {}
+    for media in content.values():
+        schema = (media or {}).get("schema") or {}
+        ref = str(schema.get("$ref", ""))
+        if ref.rsplit("/", maxsplit=1)[-1] in {"ErrorEnvelope", "ErrorEnvelope_Output"}:
+            return True
+    return False
 
 
 def failures_for(path: str, method: str, operation: dict) -> list[str]:
@@ -67,6 +75,12 @@ def failures_for(path: str, method: str, operation: dict) -> list[str]:
             for media_type, media in content.items():
                 if not (media or {}).get("schema"):
                     found.append(f"{where}: {code} {media_type} has no schema")
+
+    failures = [code for code in responses if code.startswith(("4", "5"))]
+    if not failures:
+        found.append(f"{where}: no error response")
+    elif not any(uses_error_envelope(responses[code] or {}) for code in failures):
+        found.append(f"{where}: error response does not use ErrorEnvelope")
 
     body = operation.get("requestBody")
     if body is not None:
@@ -114,7 +128,10 @@ def main() -> int:
         print("\nFix the decorator on the controller or DTO, regenerate, and commit the spec.")
         return 1
 
-    print(f"G10: {operations} operation(s) documented (summary, tag, typed 2xx, typed body).")
+    print(
+        f"G10: {operations} operation(s) documented "
+        "(summary, tag, typed 2xx, typed body, error envelope)."
+    )
     return 0
 
 

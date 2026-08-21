@@ -92,3 +92,9 @@ export const workspace = pgTable('workspace', {
  * schema without being listed here (or without RLS) fails the build.
  */
 export const TENANT_TABLES: readonly string[] = [];
+
+/**
+ * Public tables that deliberately have no workspace_id. G7 requires every public table
+ * to appear in exactly one inventory, so omitting tenant metadata cannot bypass the gate.
+ */
+export const NON_TENANT_TABLES: readonly string[] = ['workspace'];

@@ -33,5 +33,22 @@ export interface ActivityRepository {
 
 export interface OutboxRepository {
   /** Domain facts, consumed by notifications now and integration webhooks later (ADR 0011). */
-  publish(workspaceId: Ulid, eventType: string, payload: Readonly<Record<string, unknown>>): Promise<void>;
+  publish(
+    workspaceId: Ulid,
+    eventType: string,
+    payload: Readonly<Record<string, unknown>>,
+  ): Promise<void>;
+}
+
+export interface MessageDeliveryRecord {
+  readonly activity: NewActivity;
+  readonly event: {
+    readonly type: string;
+    readonly payload: Readonly<Record<string, unknown>>;
+  };
+}
+
+export interface MessageDeliveryRepository {
+  /** Persist the activity and outbox event atomically in one database transaction. */
+  record(workspaceId: Ulid, delivery: MessageDeliveryRecord): Promise<void>;
 }

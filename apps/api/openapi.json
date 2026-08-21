@@ -12,13 +12,56 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HealthResponse"
+                  "$ref": "#/components/schemas/HealthResponse_Output"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
           }
         },
         "summary": "Liveness probe",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/ready": {
+      "get": {
+        "description": "Returns ready only after the API can query its application database.",
+        "operationId": "HealthController_ready",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse_Output"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Readiness probe",
         "tags": [
           "system"
         ]
@@ -53,19 +96,20 @@
       }
     },
     "schemas": {
-      "HealthResponse": {
+      "HealthResponse_Output": {
         "type": "object",
         "properties": {
           "status": {
             "type": "string",
+            "example": "ok",
             "enum": [
               "ok"
-            ],
-            "example": "ok"
+            ]
           },
           "time": {
             "type": "string",
             "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
             "example": "2026-08-18T12:00:00.000Z"
           },
           "version": {
@@ -77,9 +121,10 @@
           "status",
           "time",
           "version"
-        ]
+        ],
+        "additionalProperties": false
       },
-      "FieldErrorDto": {
+      "FieldError": {
         "type": "object",
         "properties": {
           "field": {
@@ -96,7 +141,7 @@
           "message"
         ]
       },
-      "ErrorEnvelopeDto": {
+      "ErrorEnvelope": {
         "type": "object",
         "properties": {
           "code": {
@@ -123,24 +168,51 @@
           },
           "message": {
             "type": "string",
-            "description": "Technical summary. Do not show this to a user; use the code to pick copy.",
             "example": "free-form send refused: conversation window closed"
           },
           "details": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/FieldErrorDto"
+              "$ref": "#/components/schemas/FieldError"
             }
           },
           "requestId": {
-            "type": "string",
-            "example": "req-01JBQZ3K7X8V9WQ0R1S2T3V4W5"
+            "example": "req-01JBQZ3K7X8V9WQ0R1S2T3V4W5",
+            "type": "string"
           }
         },
         "required": [
           "code",
           "message"
         ]
+      },
+      "ReadinessResponse_Output": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "ready",
+            "enum": [
+              "ready"
+            ]
+          },
+          "time": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+            "example": "2026-08-18T12:00:00.000Z"
+          },
+          "version": {
+            "type": "string",
+            "example": "0.0.0"
+          }
+        },
+        "required": [
+          "status",
+          "time",
+          "version"
+        ],
+        "additionalProperties": false
       }
     }
   }

@@ -1,5 +1,6 @@
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import type { INestApplication } from '@nestjs/common';
+import { cleanupOpenApiDoc } from 'nestjs-zod';
 import { ErrorEnvelopeDto, FieldErrorDto } from '../interface/http/error.dto';
 
 /**
@@ -24,7 +25,9 @@ export const buildOpenApiDocument = (app: INestApplication) => {
 
   // extraModels so the error envelope appears in the spec even before an endpoint
   // declares a failure response. Consumers need the code list to branch on.
-  return SwaggerModule.createDocument(app, config, {
+  const document = SwaggerModule.createDocument(app, config, {
     extraModels: [ErrorEnvelopeDto, FieldErrorDto],
   });
+
+  return cleanupOpenApiDoc(document, { version: '3.0' });
 };

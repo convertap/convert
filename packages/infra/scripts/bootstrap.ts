@@ -30,8 +30,10 @@ const main = async () => {
 
   // The password is bound as a parameter rather than interpolated into the SQL. A DO block
   // cannot take parameters, so it reads the value back out with current_setting.
-  await db.execute(sql`select set_config('convert.app_password', ${password}, false)`);
-  await db.execute(sql.raw(statements));
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`select set_config('convert.app_password', ${password}, true)`);
+    await tx.execute(sql.raw(statements));
+  });
 
   const role = await db.execute<{
     rolname: string;

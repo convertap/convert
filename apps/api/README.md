@@ -14,6 +14,9 @@ Enforced by `tools/check_boundaries.py` in CI. Source of truth is `.boundaries.j
 
 NestJS modules, controllers, guards that resolve a Principal, webhook ingress, DTO validation, OpenAPI decoration. Controllers stay thin.
 
+`GET /health` is process liveness. `GET /ready` queries Postgres through the application role and
+is the deployment health check; do not replace it with a lazy client-construction check.
+
 ## What does not
 
 Business rules, direct SQL, provider SDK calls. Those live in application, core, and infra respectively.

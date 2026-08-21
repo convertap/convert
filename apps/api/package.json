@@ -8,7 +8,7 @@
     "build": "nest build",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --project unit",
+    "test": "pnpm --dir ../.. exec vitest run --project apps apps/api/src",
     "openapi:generate": "tsx src/openapi/generate.ts"
   },
   "dependencies": {
@@ -22,6 +22,7 @@
     "@nestjs/platform-fastify": "^11.2.1",
     "@nestjs/swagger": "^11.4.7",
     "fastify": "^5.12.0",
+    "nestjs-zod": "5.5.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2"
   },

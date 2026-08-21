@@ -1,11 +1,10 @@
 import { asUlid } from '@convert/contracts';
 import {
-  type ActivityRepository,
   type ConsentGate,
   type ContactRepository,
   type E164,
+  type MessageDeliveryRepository,
   type MessageSender,
-  type OutboxRepository,
   type TemplateCatalog,
   type UserPrincipal,
   fixedClock,
@@ -20,8 +19,7 @@ const owner: UserPrincipal = { kind: 'user', workspaceId: ORG, userId: CONTACT, 
 const now = new Date('2026-08-18T12:00:00.000Z');
 
 const build = (overrides: Partial<SendTemplateMessageDeps> = {}) => {
-  const appended: unknown[] = [];
-  const published: unknown[] = [];
+  const recorded: unknown[] = [];
   const sent: unknown[] = [];
 
   const deps: SendTemplateMessageDeps = {
@@ -36,8 +34,9 @@ const build = (overrides: Partial<SendTemplateMessageDeps> = {}) => {
       findByPhone: async () => null,
       list: async () => ({ items: [], nextCursor: null }),
     } as ContactRepository,
-    activities: { append: async (_org, a) => void appended.push(a) } as ActivityRepository,
-    outbox: { publish: async (_org, type, p) => void published.push([type, p]) } as OutboxRepository,
+    deliveries: {
+      record: async (_workspace, delivery) => void recorded.push(delivery),
+    } as MessageDeliveryRepository,
     templates: {
       find: async () => ({
         name: 'follow_up_v1',
@@ -59,7 +58,7 @@ const build = (overrides: Partial<SendTemplateMessageDeps> = {}) => {
     ...overrides,
   };
 
-  return { deps, appended, published, sent };
+  return { deps, recorded, sent };
 };
 
 const input = {
@@ -72,14 +71,17 @@ const input = {
 
 describe('sendTemplateMessage', () => {
   it('sends, logs an activity, and publishes an outbox event', async () => {
-    const { deps, appended, published, sent } = build();
+    const { deps, recorded, sent } = build();
 
     const result = await sendTemplateMessage(owner, input, deps);
 
     expect(result.providerMessageId).toBe('prov-1');
     expect(sent).toHaveLength(1);
-    expect(appended).toHaveLength(1);
-    expect(published[0]).toMatchObject(['message.sent', { contactId: CONTACT }]);
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toMatchObject({
+      activity: { subject: { id: CONTACT } },
+      event: { type: 'message.sent', payload: { contactId: CONTACT, idempotencyKey: 'key-1' } },
+    });
   });
 
   it('refuses a marketing send with no consent, before calling the provider', async () => {
@@ -110,9 +112,9 @@ describe('sendTemplateMessage', () => {
   it('refuses a send with missing template variables', async () => {
     const { deps, sent } = build();
 
-    await expect(
-      sendTemplateMessage(owner, { ...input, variables: {} }, deps),
-    ).rejects.toThrow(/missing template variables/);
+    await expect(sendTemplateMessage(owner, { ...input, variables: {} }, deps)).rejects.toThrow(
+      /missing template variables/,
+    );
     expect(sent).toHaveLength(0);
   });
 

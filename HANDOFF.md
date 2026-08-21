@@ -165,35 +165,20 @@ evidence.** #4 and #5 only need `gh pr update-branch` and will follow.
 
 ## 4. Things that are true and unpleasant
 
-**Tenant isolation can be inert while every check reports green. This is now the top engineering
-item.** `DATABASE_URL` resolves to the `postgres` superuser, and a superuser ignores row-level
-security completely, as does a table owner without `FORCE ROW LEVEL SECURITY`. ADR 0002 makes RLS
-*the* tenancy boundary. G7 asserts that RLS is *enabled* on a table, not that the connecting role
-is *subject* to it, so one workspace could read another's contacts with a green pipeline above
-it.
-
-Harmless today because no tenant table exists. **Before the first migration**, two things:
-`DATABASE_URL` must name a role that is neither superuser nor table owner, and G7 needs a second
-assertion — connect as the application role, attempt a cross-tenant read, require nothing back.
-Recorded in `.env.example` next to the variable, and as a Risk in Notion with impact "Ends the
-project", which is not hyperbole for a product whose promise is that an SME's customer list is
-its own.
-
-The cost of this rises sharply once the first migration lands, and it needs nothing from anyone
-else. Do it first.
-
 **The application role exists, and the deployed databases still do not use it.** ADR 0042 created
 `convert_app` — not a superuser, no BYPASSRLS, cannot own a table so cannot disable RLS, cannot
-create one that escapes `TENANT_TABLES`. CI proves isolation with it on every pull request.
+create one that escapes the explicit table inventories. CI proves isolation with it on every pull
+request, and G7 now fails any public table absent from both inventories.
 
 **Railway does not.** Both environments still connect as the `postgres` superuser, so the
 production boundary is exactly as weak as it was. Fixing it is a human step, per environment, and
 cannot be done from a developer machine because the database is on `postgres.railway.internal`:
 
 1. Set `APP_DB_PASSWORD` to a generated secret.
-2. Run `pnpm --filter @convert/infra bootstrap` against that environment.
-3. Add `DATABASE_URL_APP` with the `convert_app` credentials.
-4. Leave `DATABASE_URL` as the owner — migrations need DDL.
+2. Add `DATABASE_URL_APP` with the `convert_app` credentials.
+3. Leave `DATABASE_URL` as the owner — bootstrap and migrations need DDL.
+4. Deploy the API. Railway's pre-deploy commands bootstrap the role and apply migrations before
+   traffic changes; `/ready` then proves the runtime credential can query the database.
 
 **And `DATABASE_URL` is not in Infisical.** Only `NOTION_TOKEN` is. The database URL exists solely
 as a Railway service variable, which contradicts ADR 0020 and means there is no way to verify the
@@ -343,10 +328,7 @@ rollups over it.
 
 ## 8. If you do one thing
 
-**Give `DATABASE_URL` a role that RLS actually applies to, and add G7's second assertion**, before
-the first migration exists. It is the last engineering item whose cost climbs steeply with delay,
-it is fully specified in `.env.example` and §4 above, and it depends on nobody else.
-
-The deploy path used to be the entry in this slot. It is now proven for `test` and written down in
-§2, so the only claim left resting on an unseen mechanism is `deploy-staging`, and that is one
-variable flip away from being testable the same way.
+**Provision `APP_DB_PASSWORD` and `DATABASE_URL_APP` in both Railway environments, then run one
+deployment through each path.** The repository now bootstraps and migrates before deployment and
+probes `/ready`, but configuration on the private Railway databases remains a human-owned step.
+After that, start the schema and migration plan; no unresolved repository setup task blocks it.
