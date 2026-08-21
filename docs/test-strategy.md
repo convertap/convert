@@ -60,9 +60,9 @@ All twelve stubs exist today. Each carries a "how to test it" note so the person
 ## 4. Fixtures and data
 
 - **Factories, not fixtures files.** A test builds the minimum it needs, `aContact({ phone })`, so a schema change breaks one builder rather than forty files.
-- **Every factory takes an organization.** Making the tenant explicit in test setup is what makes cross-tenant tests natural to write.
+- **Every factory takes an workspace.** Making the tenant explicit in test setup is what makes cross-tenant tests natural to write.
 - **Recorded provider payloads** live alongside the integration tests, captured from real webhook traffic during the spike and redacted. Hand-written provider JSON encodes what we *think* the provider sends.
-- **No shared mutable state between tests.** Each test runs in a transaction that rolls back, or against a uniquely-named organization.
+- **No shared mutable state between tests.** Each test runs in a transaction that rolls back, or against a uniquely-named workspace.
 
 ---
 

@@ -16,7 +16,7 @@ import { type SendTemplateMessageDeps, sendTemplateMessage } from './send-templa
 const ORG = asUlid('01JBQZ3K7X8V9WQ0R1S2T3V4W5');
 const CONTACT = asUlid('01JBQZ3K7X8V9WQ0R1S2T3V4W6');
 
-const owner: UserPrincipal = { kind: 'user', orgId: ORG, userId: CONTACT, role: 'owner' };
+const owner: UserPrincipal = { kind: 'user', workspaceId: ORG, userId: CONTACT, role: 'owner' };
 const now = new Date('2026-08-18T12:00:00.000Z');
 
 const build = (overrides: Partial<SendTemplateMessageDeps> = {}) => {
@@ -28,7 +28,7 @@ const build = (overrides: Partial<SendTemplateMessageDeps> = {}) => {
     contacts: {
       findById: async () => ({
         id: CONTACT,
-        orgId: ORG,
+        workspaceId: ORG,
         phoneE164: '+233241234567' as E164,
         displayName: 'Ama Boateng',
         lastInboundAt: new Date(now.getTime() - 2 * 60 * 60 * 1000),
@@ -121,7 +121,7 @@ describe('sendTemplateMessage', () => {
 
     await expect(
       sendTemplateMessage(
-        { kind: 'client', orgId: ORG, clientId: CONTACT, scopes: ['contacts:read'] },
+        { kind: 'client', workspaceId: ORG, clientId: CONTACT, scopes: ['contacts:read'] },
         input,
         deps,
       ),
@@ -134,7 +134,7 @@ describe('sendTemplateMessage', () => {
       contacts: {
         findById: async () => ({
           id: CONTACT,
-          orgId: ORG,
+          workspaceId: ORG,
           phoneE164: '+233241234567' as E164,
           displayName: 'Ama Boateng',
           lastInboundAt: null,

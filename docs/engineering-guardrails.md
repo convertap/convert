@@ -107,7 +107,7 @@ CI jobs are written so they pass on an empty repository and tighten automaticall
 `docs/architecture.md` §6 lists invariants I1–I12. Each gets exactly one test file in `tests/invariants`, named for the invariant:
 
 ```
-tests/invariants/I01-org-scoping.spec.ts
+tests/invariants/I01-workspace-scoping.spec.ts
 tests/invariants/I02-contact-phone-uniqueness.spec.ts
 ...
 tests/invariants/I12-ulid-external-ids.spec.ts
@@ -127,7 +127,7 @@ This is the single highest-value measure in this document. Prose architecture ro
 
 Each of these has bitten similar products. They are here because a reviewer needs to check them by name.
 
-**Tenancy.** Every tenant table has `org_id NOT NULL` and an RLS policy. Never disable RLS to make a test pass, set the org context instead.
+**Tenancy.** Every tenant table has `workspace_id NOT NULL` and an RLS policy. Never disable RLS to make a test pass, set the workspace context instead.
 
 **Principal.** Every use case signature starts with a `Principal`. No use case reads an ambient request or a global session. This is what makes the Pro-tier public API additive rather than a rewrite (ADR 0003).
 

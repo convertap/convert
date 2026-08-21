@@ -29,7 +29,7 @@ Written stack-agnostic and still largely stack-independent: the layering, invari
 
 1. **Domain logic is framework-free.** Business rules live in a `core` layer that imports nothing from the web framework or the ORM. This is what makes the stack slot in §3 genuinely deferrable.
 2. **The UI is the first API client.** Screens call the same service layer a public API would. Exposing the API later becomes an authentication and serialization concern, not a rewrite.
-3. **Tenancy is enforced, not remembered.** A query that forgets `org_id` must fail, not silently return another business's data.
+3. **Tenancy is enforced, not remembered.** A query that forgets `workspace_id` must fail, not silently return another business's data.
 4. **State changes emit facts.** Every meaningful change writes an activity row and, where relevant, an outbox event. Read models and future webhooks are derived from those facts.
 5. **External calls are adapters.** WhatsApp, SMS, and any future accounting integration sit behind a port. The domain never knows the vendor.
 6. **Everything crossing the network is idempotent.** Provider webhooks retry, phones resubmit on flaky connections, and campaign workers get restarted. Duplicates are a design input.
@@ -93,8 +93,8 @@ graph LR
 
 Three entry points, and they have different threat and reliability profiles:
 
-- **Authenticated app**. Sessions, org-scoped, human pace.
-- **Public lead form**. Unauthenticated, rate-limited, spam-exposed, writes into a specific organization.
+- **Authenticated app**. Sessions, workspace-scoped, human pace.
+- **Public lead form**. Unauthenticated, rate-limited, spam-exposed, writes into a specific workspace.
 - **Webhook ingress**. Unauthenticated by session but signature-verified, high retry volume, must be idempotent.
 
 Keep them separate from the first commit. Merging them is how the lead form ends up trusted.
@@ -115,7 +115,7 @@ graph TD
     SVC["Service layer<br/>(use cases, entitlements, authz)"]
   end
   subgraph Core["Core (framework-free)"]
-    ID["Identity & orgs"]
+    ID["Identity & workspaces"]
     CRM["Contacts · Leads · Deals"]
     ACT["Activities · Tasks"]
     MSG["Messaging & consent"]
@@ -142,7 +142,7 @@ graph TD
 
 | Context | Owns | Deliberately does not own |
 |---------|------|---------------------------|
-| Identity & orgs | Organizations, users, membership, roles, invitations, sessions, API clients | Anything customer-facing |
+| Identity & workspaces | Workspaces, users, membership, roles, invitations, sessions, API clients | Anything customer-facing |
 | CRM | Contacts, leads, deals, pipeline, stages, sources | How anyone was messaged |
 | Activities & tasks | Append-only activity log, follow-up tasks, reminders | Message delivery mechanics |
 | Messaging & consent | Messages, templates, consent records, conversation windows, provider events | Why a message was sent |
@@ -155,10 +155,10 @@ graph TD
 
 ```mermaid
 erDiagram
-  ORGANIZATION ||--o{ ORG_MEMBER : has
+  WORKSPACE ||--o{ ORG_MEMBER : has
   USER ||--o{ ORG_MEMBER : joins
-  ORGANIZATION ||--o{ CONTACT : owns
-  ORGANIZATION ||--o{ PIPELINE : owns
+  WORKSPACE ||--o{ CONTACT : owns
+  WORKSPACE ||--o{ PIPELINE : owns
   PIPELINE ||--o{ PIPELINE_STAGE : contains
   CONTACT ||--o{ LEAD : generates
   LEAD |o--o| DEAL : converts_to
@@ -173,8 +173,8 @@ erDiagram
   MESSAGE_TEMPLATE ||--o{ MESSAGE : renders
   CAMPAIGN ||--o{ CAMPAIGN_RECIPIENT : targets
   CAMPAIGN_RECIPIENT ||--o| MESSAGE : produces
-  ORGANIZATION ||--o{ API_CLIENT : issues
-  ORGANIZATION ||--o{ OUTBOX_EVENT : emits
+  WORKSPACE ||--o{ API_CLIENT : issues
+  WORKSPACE ||--o{ OUTBOX_EVENT : emits
 ```
 
 ### The two state machines
@@ -269,7 +269,7 @@ they take numbers when the entities land:
 
 Three layers, each catching what the one above misses.
 
-**1. Database: Postgres row-level security.** Every tenant table gets an RLS policy on `org_id`, and the application connects as a non-superuser role that cannot bypass it. The session sets the current org per transaction. This turns a forgotten `WHERE org_id = …` from a data breach into an empty result set. It is the single most valuable decision in this document and costs about a day.
+**1. Database: Postgres row-level security.** Every tenant table gets an RLS policy on `workspace_id`, and the application connects as a non-superuser role that cannot bypass it. The session sets the current workspace per transaction. This turns a forgotten `WHERE workspace_id = …` from a data breach into an empty result set. It is the single most valuable decision in this document and costs about a day.
 
 **2. Service layer: authorization.** Role checks (`Owner`, `Sales Representative`) and record-level visibility. **Decided (R3, ADR 0032):** an owner sees everything; a rep sees their own records **plus everything unassigned**; widening is a per-member `can_view_all_leads` grant rather than a workspace-wide toggle. Every tenant list query therefore carries the predicate `role = Owner OR can_view_all_leads OR owner_id = :member OR owner_id IS NULL`.
 
@@ -280,9 +280,9 @@ Three layers, each catching what the one above misses.
 ```mermaid
 flowchart TD
   P["Principal"]
-  P --> U["UserPrincipal<br/>session: org_id, user_id, role"]
-  P --> C["ClientPrincipal<br/>API key: org_id, client_id, scopes<br/>Pro tier, deferred"]
-  P --> S["SystemPrincipal<br/>worker: org_id, no interactive rights"]
+  P --> U["UserPrincipal<br/>session: workspace_id, user_id, role"]
+  P --> C["ClientPrincipal<br/>API key: workspace_id, client_id, scopes<br/>Pro tier, deferred"]
+  P --> S["SystemPrincipal<br/>worker: workspace_id, no interactive rights"]
 ```
 
 Every service method takes a principal. Every activity and audit row records which kind acted. Doing this on day one is what makes C5 cheap; skipping it is what makes it a rewrite. The worker being a first-class principal also means "the system sent this reminder" is attributable in the timeline, which matters for pilot support.
@@ -305,7 +305,7 @@ Not in MVP scope (scope §20), but the conventions below cost nothing while ther
 | Pagination | Cursor-based, opaque cursor. Offset pagination breaks under concurrent writes and cannot be retrofitted |
 | Errors | One envelope: stable machine `code`, human `message`, optional field-level `details` |
 | Rate limits | Per principal, not per IP, with limit headers on every response |
-| Outbound webhooks | Fed by `outbox_event`, per-org endpoint registration, signed payloads, at-least-once delivery with exponential backoff and a dead-letter view |
+| Outbound webhooks | Fed by `outbox_event`, per-workspace endpoint registration, signed payloads, at-least-once delivery with exponential backoff and a dead-letter view |
 
 **The internal consequence:** if the UI reads the service layer directly and the API gets its own parallel path, they will diverge and the API will be second-class. One service layer, two serializations (§5).
 
@@ -383,7 +383,7 @@ Utility and service messages follow different provider rules from marketing; the
 
 1. Verify signature. Reject unsigned traffic before parsing.
 2. Persist the raw payload as a `provider_event`, keyed on the provider's event ID. **Duplicate key means stop here**. The work is already done.
-3. Resolve the sender by `phone_e164` within the receiving organization.
+3. Resolve the sender by `phone_e164` within the receiving workspace.
 4. Match or create a contact, append the message and an activity row, update `last_inbound_at`.
 5. **[DECIDE depends on the WhatsApp spikes]** If no contact matches, create a lead with source `WhatsApp`. This is the deck's headline capture path. The demo spike determines whether it is shown in the demo; the production readiness spike determines whether it ships for real pilot/customer usage.
 
@@ -434,10 +434,10 @@ Push and WhatsApp-based reminders are deferred, but the notification record carr
 
 | Concern | Approach |
 |---------|----------|
-| Structured logs | JSON, always carrying request ID, org ID, and principal kind. Never log message bodies or full phone numbers |
+| Structured logs | JSON, always carrying request ID, workspace ID, and principal kind. Never log message bodies or full phone numbers |
 | Errors | Aggregation service from day one, with release tagging |
 | Tracing | Request → job → provider call, correlated by request ID. Without this, "the campaign didn't send" is unanswerable |
-| Metrics | Message send success rate and cost per org, job queue depth and age, reminder delivery latency, p75 mobile page load |
+| Metrics | Message send success rate and cost per workspace, job queue depth and age, reminder delivery latency, p75 mobile page load |
 | Provider dashboards | WhatsApp quality rating and template approval status. A silent quality downgrade throttles sends and looks like a product bug |
 
 The pilot's real purpose is learning. If activation (10 contacts + 1 deal in 7 days, scope §26) is not instrumented at build time, the pilot produces opinions instead of evidence, checklist S5.
@@ -447,11 +447,11 @@ The pilot's real purpose is learning. If activation (10 contacts + 1 deal in 7 d
 ## 16. Security
 
 - **Tenancy isolation is the primary control**. RLS plus service-layer authorization plus principal separation (§7).
-- **Public lead form** is unauthenticated and internet-facing: rate limit per IP and per organization, bot mitigation, strict field validation, and no reflection of stored data back to the submitter.
+- **Public lead form** is unauthenticated and internet-facing: rate limit per IP and per workspace, bot mitigation, strict field validation, and no reflection of stored data back to the submitter.
 - **Webhook ingress** verifies provider signatures before parsing; unsigned requests are dropped, not logged as errors.
 - **Secrets** in a managed secret store, never in the repository. Provider credentials are per-environment.
 - **API keys** hashed at rest, shown once, prefixed so leaked keys are detectable in scans.
-- **PII discipline**. Customer phone numbers are third-party data under L1–L4. Encrypt at rest, redact in logs, and support per-organization export and deletion from the start (C7). Retrofitting deletion across an append-only log is genuinely hard; design the boundary now.
+- **PII discipline**. Customer phone numbers are third-party data under L1–L4. Encrypt at rest, redact in logs, and support per-workspace export and deletion from the start (C7). Retrofitting deletion across an append-only log is genuinely hard; design the boundary now.
 - **Sessions**. Long-lived on mobile to avoid re-auth cost (relevant if A1 lands on phone+OTP, where every login costs an SMS), with server-side revocation on member deactivation.
 
 ---
@@ -503,7 +503,7 @@ For each deferred capability: the seam that goes in now, and the line not to cro
 | Public API (C5) | Principals, ULIDs, service layer, idempotency, error envelope, outbox (§8) | No routes, no key issuance UI |
 | Integration webhooks | `outbox_event` written on domain facts | No endpoint registration, no delivery worker |
 | Attribution / cost-per-lead | Source recorded at capture; `Insights` read interface | No spend ingestion, no attribution model |
-| Multiple pipelines | `pipeline` and `pipeline_stage` are already tables, seeded with one default per org | No pipeline editor UI |
+| Multiple pipelines | `pipeline` and `pipeline_stage` are already tables, seeded with one default per workspace | No pipeline editor UI |
 | Native apps | Responsive web only (scope §18) | No shared-client abstraction layer |
 
 The `pipeline` row is worth calling out: modelling stages as data rather than an enum costs nothing today and is the difference between a config change and a migration when the second pipeline arrives.
@@ -519,9 +519,9 @@ Blocking. Each maps to a checklist item; none can be resolved unilaterally by en
 | ~~S1~~ | ~~Stack~~ | **Decided**, Next.js + NestJS/Fastify + worker on Postgres (ADR 0001) |
 | A1 | Long-lived mobile sessions, held by the web BFF (ADR 0013) | Login method |
 | A6 | Principal abstraction from day one | Sign-off |
-| R1 | `phone_e164` unique per org, merge prompt on collision | Sign-off |
+| R1 | `phone_e164` unique per workspace, merge prompt on collision | **Decided 2026-08-21, ADR 0030** |
 | R2/R8 | Lead and Deal as separate state machines; explicit conversion | Sign-off |
-| R3 | Rep sees own leads by default, org toggle | **Sign-off before any list query is written** |
+| R3 | Rep sees own leads plus unassigned; widening is a per-member grant | **Decided 2026-08-21, ADR 0032** |
 | R9 | ULID external IDs | Sign-off |
 | E3 | Provider adapter is swappable | Meta test vs Cloud API direct vs BSP vs internal production adapter |
 | E6 | No Meta Lead Ads ingestion path in MVP | In/out decision |

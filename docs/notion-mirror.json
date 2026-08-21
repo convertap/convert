@@ -34,7 +34,7 @@
           "page_block": 3
         }
       ],
-      "hash": "d723168a6d62d7bc"
+      "hash": "03b5fe3b2939d8cf"
     },
     {
       "title": "Domain model and vocabulary: state machines",
@@ -76,7 +76,7 @@
           "section": "## 18. Performance budget (C1, S2)"
         }
       ],
-      "hash": "b71d03c76b724c30"
+      "hash": "5ecbb6adcdd7c1c9"
     },
     {
       "title": "Domain model and vocabulary: ERD and words",
@@ -89,7 +89,7 @@
           "section": "## 6. Domain model"
         }
       ],
-      "hash": "58d5bbd285c29550"
+      "hash": "0c57c79c635c45ba"
     },
     {
       "title": "What we are building",
@@ -110,7 +110,7 @@
           "section": "## 21. Deferred Product Capabilities"
         }
       ],
-      "hash": "3303898f31daaae9"
+      "hash": "842230e9a5257892"
     },
     {
       "title": "Deck vs reality",
@@ -136,7 +136,7 @@
           "section": "## 12. Open Questions"
         }
       ],
-      "hash": "1ed7dba03b3b4cec"
+      "hash": "14ea8b4f36e5a78a"
     }
   ]
 }

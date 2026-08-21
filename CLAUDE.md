@@ -25,7 +25,7 @@ Do not resolve a scope conflict yourself. If the two docs disagree on something 
 
 ## MVP boundary
 
-In: auth, organizations, members/roles, contacts, leads, lead sources, one default pipeline, deals, activities, tasks/follow-up reminders, WhatsApp/SMS outbound, lightweight campaigns, in-app notifications, dashboard, search/filter. Responsive web.
+In: auth, workspaces, members/roles, contacts, leads, lead sources, one default pipeline, deals, activities, tasks/follow-up reminders, WhatsApp/SMS outbound, lightweight campaigns, in-app notifications, dashboard, search/filter. Responsive web.
 
 Out: quotes, invoices, payments/billing, seat enforcement, AI scoring, multiple pipelines, native apps, integrations/API, cost-per-lead attribution, advanced RBAC. Full list in `mvp-scope.md` §20–21.
 
@@ -43,7 +43,7 @@ Decided 2026-08-18 (S1, ADR 0001): **Next.js** web · **NestJS on the Fastify ad
 `packages/contracts`, `core`, `application`, `infra`. The API boots and serves Swagger. Twelve
 invariant tests pass. Guardrails G1–G15 run in CI and four of them run before every push.
 
-**What is deliberately not built.** `packages/infra/src/db/schema.ts` holds `organization` and
+**What is deliberately not built.** `packages/infra/src/db/schema.ts` holds `workspace` and
 nothing else, and `TENANT_TABLES` is an empty array. There are no migrations. That is not an
 oversight: R1, R2, R3 and R8 decide the shape of contact, lead and deal, and guessing them means
 building the schema twice.

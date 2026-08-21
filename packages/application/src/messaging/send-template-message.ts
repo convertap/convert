@@ -59,7 +59,7 @@ export const sendTemplateMessage = async (
     throw forbidden('send messages');
   }
 
-  const contact = await deps.contacts.findById(principal.orgId, input.contactId);
+  const contact = await deps.contacts.findById(principal.workspaceId, input.contactId);
   if (!contact) throw notFound('contact');
 
   const template = await deps.templates.find(input.templateName);
@@ -84,7 +84,7 @@ export const sendTemplateMessage = async (
 
   if (requiresConsent(template.category)) {
     const granted = await deps.consent.hasMarketingConsent(
-      principal.orgId,
+      principal.workspaceId,
       contact.id,
       input.channel,
     );
@@ -108,7 +108,7 @@ export const sendTemplateMessage = async (
     idempotencyKey: input.idempotencyKey,
   });
 
-  await deps.activities.append(principal.orgId, {
+  await deps.activities.append(principal.workspaceId, {
     type: input.channel === 'whatsapp' ? 'whatsapp' : 'sms',
     subject: { kind: 'contact', id: contact.id },
     actor: principalLabel(principal),
@@ -116,7 +116,7 @@ export const sendTemplateMessage = async (
     note: `template ${template.name} sent (window ${window})`,
   });
 
-  await deps.outbox.publish(principal.orgId, 'message.sent', {
+  await deps.outbox.publish(principal.workspaceId, 'message.sent', {
     contactId: contact.id,
     channel: input.channel,
     templateName: template.name,

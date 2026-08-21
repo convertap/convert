@@ -13,7 +13,7 @@ import type { E164 } from '../shared/phone';
 
 export interface ContactRecord {
   readonly id: Ulid;
-  readonly orgId: Ulid;
+  readonly workspaceId: Ulid;
   readonly phoneE164: E164;
   readonly displayName: string;
   /** Drives the derived WhatsApp conversation window (ADR 0007). */
@@ -21,17 +21,17 @@ export interface ContactRecord {
 }
 
 export interface ContactRepository {
-  findById(orgId: Ulid, contactId: Ulid): Promise<ContactRecord | null>;
-  findByPhone(orgId: Ulid, phone: E164): Promise<ContactRecord | null>;
-  list(orgId: Ulid, page: PageRequest): Promise<CursorPage<ContactRecord>>;
+  findById(workspaceId: Ulid, contactId: Ulid): Promise<ContactRecord | null>;
+  findByPhone(workspaceId: Ulid, phone: E164): Promise<ContactRecord | null>;
+  list(workspaceId: Ulid, page: PageRequest): Promise<CursorPage<ContactRecord>>;
 }
 
 export interface ActivityRepository {
   /** Append only. There is no update and no delete, at any layer (I6). */
-  append(orgId: Ulid, activity: NewActivity): Promise<void>;
+  append(workspaceId: Ulid, activity: NewActivity): Promise<void>;
 }
 
 export interface OutboxRepository {
   /** Domain facts, consumed by notifications now and integration webhooks later (ADR 0011). */
-  publish(orgId: Ulid, eventType: string, payload: Readonly<Record<string, unknown>>): Promise<void>;
+  publish(workspaceId: Ulid, eventType: string, payload: Readonly<Record<string, unknown>>): Promise<void>;
 }

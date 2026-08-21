@@ -21,7 +21,7 @@ We aim to acknowledge within three working days.
 
 The product is pre-release: there is no production deployment and no real customer data
 yet. What is in scope is this repository, the tenancy model, the messaging adapters, the
-public lead-capture path, and anything that would let one organisation reach another's
+public lead-capture path, and anything that would let one workspace reach another's
 data.
 
 **Not** in scope: the placeholder values in `.env.example` (they are deliberately fake),
@@ -32,9 +32,9 @@ and findings that depend on already having database credentials.
 The architecture names its own load-bearing assumptions, and a break in any of these is a
 serious finding:
 
-- **Tenancy isolation.** Every tenant table carries `org_id` under PostgreSQL row-level
+- **Tenancy isolation.** Every tenant table carries `workspace_id` under PostgreSQL row-level
   security, and the application connects as a role that cannot bypass it (ADR 0002). Any
-  path returning another organisation's rows is the most severe issue this project has.
+  path returning another workspace's rows is the most severe issue this project has.
 - **Webhook ingress.** Provider callbacks are signature-verified before parsing.
 - **The public lead form.** Unauthenticated and internet-facing by design.
 - **Credential handling.** The browser never holds an API credential; the session is an

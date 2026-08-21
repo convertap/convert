@@ -112,7 +112,7 @@ One decision session with the product owner, before any code. This is `mvp-scope
 
 | ID | Decision | Recommendation | Status |
 |----|----------|----------------|--------|
-| R1 | Phone number as contact identity, unique per org? merge or flag duplicates? | **Decided 2026-08-21:** Normalize to E.164 on write; unique per **workspace**; several numbers per contact, one primary, all matchable for inbound; merge prompt on collision; at least one of phone/email. ADR 0030 | ☑ |
+| R1 | Phone number as contact identity, unique per workspace? merge or flag duplicates? | **Decided 2026-08-21:** Normalize to E.164 on write; unique per **workspace**; several numbers per contact, one primary, all matchable for inbound; merge prompt on collision; at least one of phone/email. ADR 0030 | ☑ |
 | R2 | Lead ↔ Deal cardinality, and what creates a Deal | **Decided 2026-08-21:** A deal is an opportunity for **one product**, created by explicit rep action at Qualified. A lead has many deals, at most one open per product. ADR 0031 | ☑ |
 | R3 | Can a rep see other reps' leads? | **Decided 2026-08-21:** Owner sees all; rep sees own **plus unassigned**; widening is a per-member `can_view_all_leads` grant. Reps claim unassigned leads without blocking approval. ADR 0032 | ☑ |
 | R4 | Reassignment and offboarding: what happens to a deactivated rep's leads | **Decided 2026-08-21:** Deactivation reassigns to a named member **or** returns records to the unassigned queue. Never orphaned. ADR 0032 | ☑ |
@@ -133,9 +133,9 @@ R3 is not a permissions feature. It decides whether every query is owner-scoped 
 | ID | Decision | Notes | Status |
 |----|----------|-------|--------|
 | A1 | Login method | **Decided 2026-08-20:** identity accepts email *or* phone (at least one, each unique); passwordless, the credential is always a one-time code; delivered through a `VerificationPort` with Fabric behind it, over email or SMS (WhatsApp once E4 approves an authentication template). 15-minute access token, 30-day rotating refresh. ADR 0029 | ☑ |
-| A2 | Does a user belong to one organization, or many? | **Decided 2026-08-21:** A user belongs to **many** workspaces. ADR 0030 | ☑ |
+| A2 | Does a user belong to one workspace, or many? | **Decided 2026-08-21:** A user belongs to **many** workspaces. ADR 0030 | ☑ |
 | A3 | Invite acceptance channel | A1 settled the identifier: an invite is addressed to whichever identifier the owner enters, and accepted by the same one-time code flow. Remaining question is only the wording and expiry of an invite | ◐ |
-| A4 | Tenancy model | **Decided 2026-08-21:** Workspace is the tenant; `organization` renamed to `workspace`; contacts copied, never shared. ADR 0030 | ☑ |
+| A4 | Tenancy model | **Decided 2026-08-21:** Workspace is the tenant; `workspace` renamed to `workspace`; contacts copied, never shared. ADR 0030 | ☑ |
 | A5 | Entitlement boundary | **Decided 2026-08-21:** Subscription per workspace; split fee platform default with per-workspace override, snapshotted per transaction. ADR 0034 | ☑ |
 | A6 | Principal model | **Decided 2026-08-21:** Principal model confirmed, plus a fourth `PlatformAdminPrincipal` with audited, non-ambient cross-tenant access. ADR 0035 | ☑ |
 
@@ -266,7 +266,7 @@ Fill in as decisions land. Record the decision, not the discussion.
 | 2026-08-18 | S1 | Next.js web, NestJS on Fastify api, one worker, one PostgreSQL, pnpm monorepo. ADR 0001 | Engineering |
 | 2026-08-18 | S7 | OpenAPI generated with `@nestjs/swagger`, committed, drift fails G10. ADR 0015 | Engineering |
 | 2026-08-20 | A1 | Email *or* phone as identifier; passwordless one-time code as the only credential; Fabric behind a `VerificationPort`. ADR 0029 | Product owner |
-| 2026-08-21 | R1, A2, A4 | Workspace is the tenant; `organization` renamed; a user joins many workspaces; contacts copied; contact identity and multi-number inbound matching. ADR 0030 | Product owner |
+| 2026-08-21 | R1, A2, A4 | Workspace is the tenant; `workspace` renamed; a user joins many workspaces; contacts copied; contact identity and multi-number inbound matching. ADR 0030 | Product owner |
 | 2026-08-21 | R2, R8 | A deal is a per-product opportunity; a lead has many; a converted lead's deal enters at `Qualified`; lost reason optional; Lost terminal. ADR 0031 | Product owner |
 | 2026-08-21 | R3, R4 | Rep sees own plus unassigned; per-member visibility grant; non-blocking claim; deactivation may park records in the queue. ADR 0032 | Product owner |
 | 2026-08-21 | scope | Commerce enters the MVP: products, media library, invoices, composable tax. `product-spec.md` §13 amendment A. ADR 0033 | Product owner |

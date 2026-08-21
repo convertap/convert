@@ -53,5 +53,5 @@ export interface TemplateCatalog {
  * bypass the UI (invariant I9, ADR 0008).
  */
 export interface ConsentGate {
-  hasMarketingConsent(orgId: Ulid, contactId: Ulid, channel: MessageChannel): Promise<boolean>;
+  hasMarketingConsent(workspaceId: Ulid, contactId: Ulid, channel: MessageChannel): Promise<boolean>;
 }

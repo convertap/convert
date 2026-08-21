@@ -84,24 +84,24 @@ This target provides enough complexity to validate Convert's team collaboration 
 
 ---
 
-## 5. Organization and User Management
+## 5. Workspace and User Management
 
 Businesses must be able to create and manage their Convert workspace.
 
 ### MVP capabilities
 
 - Create business account.
-- Create organization/workspace.
-- Organization profile.
+- Create workspace.
+- Workspace profile.
 - Invite team members.
 - Accept team invitations.
-- View organization members.
+- View workspace members.
 - Activate or deactivate users.
 - Assign basic user roles.
 
 ### Initial roles
 
-**Owner / Administrator**. Can manage the organization, team members, leads, deals, pipelines, campaigns, and settings.
+**Owner / Administrator**. Can manage the workspace, team members, leads, deals, pipelines, campaigns, and settings.
 
 **Sales Representative**. Can manage assigned leads, deals, follow-ups, notes, and customer interactions.
 
@@ -111,7 +111,7 @@ More complex role-based access control can be introduced after MVP validation.
 
 ## 6. Contact Management
 
-Contacts represent people or organizations the business sells to.
+Contacts represent people or workspaces the business sells to.
 
 ### MVP capabilities
 
@@ -236,7 +236,7 @@ Convert maintains an activity history for every lead and deal.
 - Date/time
 - Notes or description
 
-This creates organizational memory so customer relationships are not stored only on individual employees' phones, a problem explicitly identified in the product concept.
+This creates workspaceal memory so customer relationships are not stored only on individual employees' phones, a problem explicitly identified in the product concept.
 
 ---
 
@@ -389,7 +389,7 @@ Main workflows must work effectively on:
 ## 19. MVP Product Areas
 
 ### Foundation
-Authentication · Organizations · Users · Roles
+Authentication · Workspaces · Users · Roles
 
 ### Customer Management
 Contacts · Leads · Lead source
@@ -508,9 +508,9 @@ The technical architecture should support expansion into later Convert functiona
 
 Initial entities:
 
-- Organization
+- Workspace
 - User
-- Organization Member
+- Workspace Member
 - Contact
 - Lead
 - Lead Source
@@ -542,13 +542,13 @@ Important screens: Login/signup · Dashboard · Contacts · Contact details · L
 Architecture document · Database/domain model · API specification · Integration design · Security design · Deployment strategy · Development environment
 
 ### Phase 4. MVP Implementation
-Authentication · Organization management · User/team management · Contacts · Leads · Lead sources · Pipeline · Deals · Activities · Tasks · Follow-up reminders · WhatsApp/SMS integration · Basic campaigns · Notifications · Dashboard · Search/filtering
+Authentication · Workspace management · User/team management · Contacts · Leads · Lead sources · Pipeline · Deals · Activities · Tasks · Follow-up reminders · WhatsApp/SMS integration · Basic campaigns · Notifications · Dashboard · Search/filtering
 
 ### Phase 5. Testing
 Unit · Integration · API · End-to-end · Responsive/mobile · Security · Performance · User acceptance
 
 ### Phase 6. Pilot Launch
-Recruit pilot businesses · Configure their organizations · Onboard users · Import initial contacts where necessary · Observe real usage · Gather structured feedback · Monitor errors and performance · Identify usability issues · Measure adoption
+Recruit pilot businesses · Configure their workspaces · Onboard users · Import initial contacts where necessary · Observe real usage · Gather structured feedback · Monitor errors and performance · Identify usability issues · Measure adoption
 
 ---
 
@@ -557,7 +557,7 @@ Recruit pilot businesses · Configure their organizations · Onboard users · Im
 The MVP is not successful simply because all features have been developed. Success is based on product usage and business outcomes.
 
 ### Activation
-Users successfully create an organization, add/import contacts, add leads, create deals, and record sales activities.
+Users successfully create an workspace, add/import contacts, add leads, create deals, and record sales activities.
 
 The pitch deck proposes measuring whether new customers add at least **10 contacts** and log at least **one deal** within **seven days**.
 
@@ -589,7 +589,7 @@ Whether pilot SMEs continue using Convert once the initial onboarding period end
 The MVP is technically ready for pilot deployment when:
 
 - A business can register.
-- A business can create its organization.
+- A business can create its workspace.
 - Team members can join.
 - Contacts can be created and managed.
 - Leads can be captured.

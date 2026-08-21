@@ -1,6 +1,6 @@
 /**
  * Deal pipeline stages. Stages are DATA, not an enum, in the database (architecture.md
- * section 19) - one default pipeline per organisation for the MVP, so a second pipeline
+ * section 19) - one default pipeline per workspace for the MVP, so a second pipeline
  * later is a configuration change rather than a migration.
  *
  * The values below are the seed for that default pipeline.
