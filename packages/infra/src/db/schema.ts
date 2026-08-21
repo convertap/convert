@@ -1,4 +1,14 @@
-import { pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { pgEnum, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import {
+  CONSENT_CHANNELS,
+  INVOICE_STATES,
+  LEAD_SOURCES,
+  LEAD_STATUSES,
+  MEMBER_ROLES,
+  MESSAGE_STATUSES,
+  PAYMENT_ORIGINS,
+  PRODUCT_KINDS,
+} from '@convert/contracts';
 
 /**
  * Schema, deliberately almost empty.
@@ -21,6 +31,26 @@ import { pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
  *   - for activity and consent, revoked UPDATE and DELETE (ADR 0009, invariant I6)
  * Gate G7 asserts the RLS half of that automatically.
  */
+/**
+ * Closed sets whose values are product rules become native Postgres enums (ADR 0044).
+ *
+ * Built from the tuples in @convert/contracts rather than restated here, so the database
+ * type, the domain's union types and the browser's labels cannot drift apart. Declaration
+ * order is preserved, and a Postgres enum sorts by declaration - so `order by status`
+ * gives funnel order rather than alphabetical.
+ *
+ * Deal stage is deliberately not here. It is a `pipeline_stage` row, because pipelines are
+ * per workspace and the deck promises editable ones later (architecture.md section 6).
+ */
+export const leadStatus = pgEnum('lead_status', LEAD_STATUSES);
+export const leadSource = pgEnum('lead_source', LEAD_SOURCES);
+export const memberRole = pgEnum('member_role', MEMBER_ROLES);
+export const invoiceState = pgEnum('invoice_state', INVOICE_STATES);
+export const paymentOrigin = pgEnum('payment_origin', PAYMENT_ORIGINS);
+export const productKind = pgEnum('product_kind', PRODUCT_KINDS);
+export const consentChannel = pgEnum('consent_channel', CONSENT_CHANNELS);
+export const messageStatus = pgEnum('message_status', MESSAGE_STATUSES);
+
 export const workspace = pgTable('workspace', {
   /**
    * The ULID, and the only identifier (ADR 0043). Stored in a `uuid` column because a

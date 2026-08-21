@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 /**
  * Identifiers are ULIDs (ADR 0043, superseding ADR 0004): opaque, lexicographically
  * sortable, and safe to expose. A ULID is the *primary* key — there is no second,
@@ -9,26 +11,30 @@
  * creation order, and new rows land at the end of an index rather than scattered
  * through it the way a random uuid does.
  *
- * Implemented here rather than taken from a package because `.boundaries.json` says this
- * layer "depends on nothing", and it is the one package both web and api may import.
+ * The generation and base32 handling are written here rather than taken from a package.
+ * Zod is the one dependency this layer carries (ADR 0044), because validation is what the
+ * layer is for; a second package for 40 lines of base32 is not the same trade.
  *
- * Branded so a raw string cannot be passed where an id is expected.
+ * Branded, so a raw string cannot be passed where an id is expected.
  */
-export type Ulid = string & { readonly __brand: 'Ulid' };
 
 /** Crockford base32. I, L, O and U are excluded to survive being read out loud. */
 const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
 const ULID_RE = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 
-export const isUlid = (value: string): value is Ulid => ULID_RE.test(value);
+export const ulidSchema = z
+  .string()
+  .regex(ULID_RE, 'not a ULID: expected 26 characters of Crockford base32')
+  .brand<'Ulid'>();
 
-export const asUlid = (value: string): Ulid => {
-  if (!isUlid(value)) {
-    throw new Error(`not a ULID: ${value}`);
-  }
-  return value;
-};
+export type Ulid = z.infer<typeof ulidSchema>;
+
+/** True when the string is a ULID. Narrows, so a raw string becomes a branded one. */
+export const isUlid = (value: string): value is Ulid => ulidSchema.safeParse(value).success;
+
+/** Throws unless the string is a ULID. Use at a boundary; inside, take a `Ulid`. */
+export const asUlid = (value: string): Ulid => ulidSchema.parse(value);
 
 const encode = (value: bigint): Ulid => {
   let out = '';
