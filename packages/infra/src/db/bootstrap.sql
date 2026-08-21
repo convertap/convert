@@ -32,7 +32,15 @@ $$;
 
 -- It may read and write rows, and nothing else. No DDL: a role that can ALTER TABLE can
 -- turn RLS off, which would make the boundary advisory.
-grant connect on database current_database() to convert_app;
+-- GRANT ... ON DATABASE takes a literal name, not a function, so the name has to be
+-- interpolated. CONNECT is granted to PUBLIC by default, so this is belt and braces for a
+-- database where that has been revoked.
+do $$
+begin
+  execute format('grant connect on database %I to convert_app', current_database());
+end
+$$;
+
 grant usage on schema public to convert_app;
 grant select, insert, update, delete on all tables in schema public to convert_app;
 grant usage, select on all sequences in schema public to convert_app;
