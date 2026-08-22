@@ -102,7 +102,7 @@ version-specific, so `docker-compose.yml` now uses a separate `convert-pgdata-18
 `/var/lib/postgresql`, which is where the 18 image declares its volume. The old one is left alone.
 
 Compose prefixes volume names with the project, so the old volume is usually
-`project_convert-pgdata` rather than `convert-pgdata` — find yours with
+`project_convert-pgdata` rather than `convert-pgdata`, so find yours with
 `docker volume ls --filter name=convert`. Nothing in this repository needs migrating out of it,
 because there is no schema yet, but only you know whether you put anything in it by hand. Inspect it
 before removing it, and delete by its real name.
