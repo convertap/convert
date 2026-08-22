@@ -11,6 +11,7 @@
     "generate": "drizzle-kit generate",
     "bootstrap": "tsx scripts/bootstrap.ts",
     "migrate": "tsx scripts/migrate.ts",
+    "pre-deploy": "pnpm run bootstrap && pnpm run migrate",
     "assert:rls": "tsx scripts/assert-rls.ts",
     "assert:conventions": "tsx scripts/assert-conventions.ts",
     "build": "tsc -p tsconfig.json"

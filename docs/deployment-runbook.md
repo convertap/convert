@@ -38,6 +38,16 @@ the system, it belongs in Infisical (ADR 0020), and nothing but bootstrap and mi
    commit; the PR to `main` requires the corresponding staging checks.
 4. The API pre-deploy phase runs role bootstrap and then every Drizzle migration. A failure stops
    the deployment before traffic changes.
+
+   **It is one command, and it has to stay one.** `railway.schema.json` allows
+   `deploy.preDeployCommand` to be a string, or an array of **at most one** element. From PR #46
+   until 22 August 2026 `apps/api/railway.json` held an array of two, so Railway rejected the config
+   and failed every api deployment *before building* — four consecutive failures, no build log, and
+   the CLI reporting only `Deploy failed`. `@convert/web` was unaffected because it has no pre-deploy
+   command, which is what made it look like an api problem rather than a config one. The two steps
+   now live in the `pre-deploy` script of `@convert/infra`, so ordering stays explicit and the
+   Railway field stays a single string. If a third step is ever needed, it goes in that script, never
+   into the array.
 5. Railway waits for `/ready`, which executes `select 1` through `DATABASE_URL_APP`.
 6. GitHub probes the same readiness URL after `railway up` returns.
 
