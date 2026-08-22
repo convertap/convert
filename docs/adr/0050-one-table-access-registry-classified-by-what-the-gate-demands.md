@@ -3,7 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-08-21
 **Supersedes:** 0042, in one part only — the table classification inventory; 0047, in two parts only — `IDENTITY_TABLES`, and the `verification_attempt` access mechanism
-**Superseded by:** 0051, in one part only — the blanket refusal of views and materialized views, which is now a rule they can satisfy. Everything else here stands, and ADR 0052 additionally asserts the migration owner's attributes, which this record left as an open question
+**Superseded by:** - (ADR 0051 decides views and materialized views, which this record leaves to it; ADR 0052 asserts the migration owner's attributes, which this record named as an open question. Neither supersedes anything here)
 
 ## Context
 
@@ -71,23 +71,28 @@ access cannot use `role-grants`.** This is the rule that replaces 0047's `verifi
 paragraph, and it is deliberately phrased as a prohibition, because the failure it prevents is a
 reviewer reading "no RLS, narrow grant instead" and believing rows were narrowed.
 
-**That prohibition is held by the foreign-key graph, not by a column name.** A `role-grants` table
-with any transitive foreign-key path to a row-scoped table fails, and a NOT NULL `uuid` foreign key
-to `workspace(id)` forces `workspace-rls` on the table holding it, whatever that column is called.
-The first draft looked for a column named `workspace_id`, which review defeated in one move: a child
-table with a `lead_id` and no tenant column of its own classified itself `role-grants`, carried a
-`reason` a reviewer would accept, and returned every tenant's rows. **A `reason` is not a defence** —
-it is the sentence a reviewer reads instead of checking, so the gate does not rely on it being true.
+**That prohibition is held by the foreign-key graph *and* by the column name, which are complements.**
+Any class carrying no policy of its own — `role-grants` or `view` — fails if it has a transitive
+foreign-key path to a row-scoped table, on the identity axis as well as the tenancy one. A NOT NULL
+`uuid` foreign key to `workspace(id)` forces `workspace-rls` on the table holding it, whatever that
+column is called. And a NOT NULL `uuid` column *named* `workspace_id` forces it too, regardless of
+what the graph says.
+
+Both halves exist because each was defeated alone. The first draft checked only the column name, and
+review beat it with a child table carrying a `lead_id` and no tenant column, which classified itself
+`role-grants` and returned every tenant's rows. The graph replaced the name check as though it
+subsumed it — and review beat *that* with an append-only event log carrying `workspace_id` and no
+foreign key at all, which is the idiomatic shape for such a table, written that way so a row outlives
+what it describes. The graph is blind where there is no edge. **A `reason` is not a defence** — it is
+the sentence a reviewer reads instead of checking, and in both escapes it read perfectly well.
 
 **The class names what is enforced, not what the table is about.** "Identity" remains a domain
 concept, and it belongs in the glossary, where nothing load-bearing rests on it.
 
-**Only tables and partitioned tables are classifiable. Views and materialized views fail the build.**
-A view runs with its owner's rights unless it sets `security_invoker`, and migrations run as the
-owner, so a view over a tenant table bypasses that table's policy; row-level security never applies
-to reading a materialized view at all. Both were demonstrated returning a full tenant table to the
-application role. Neither gets a registry class here, because how they should be scoped is a decision
-nobody has made, and refusing them is the honest placeholder for it.
+**This record classifies tables and partitioned tables. Views and materialized views are decided by
+ADR 0051**, written a day later in the same unlanded change after their behaviour was measured rather
+than argued about. Nothing here refuses them; a foreign table is still refused, being data this
+database does not hold and cannot police.
 
 **A partition inherits its root's entry** rather than needing one of its own — a monthly-partitioned
 table would otherwise need a registry entry per month — and is then held to the same policy rules,
@@ -114,11 +119,13 @@ Postgres uses the `USING` expression for both visible rows and newly added ones 
 omitted on an `ALL` policy, so one expression governs read and write and there is one thing to verify
 rather than two that can disagree.
 
-**`scopeColumn` is checked against the catalogue, not taken on trust.** It must exist, be a NOT NULL
-`uuid`, and either reference `workspace(id)` or be it. A nullable scope column is worse than it
-looks: a null never equals the context, so such a row is unreachable rather than protected. And a
-plausible wrong answer — `created_by_id` on a table that also carries `workspace_id` — produces a
-policy that is canonical in shape and isolates by the wrong axis, which review demonstrated passing.
+**`scopeColumn` is checked against the catalogue, not taken on trust.** It must exist and be a NOT
+NULL `uuid`; for `workspace-rls` it must additionally reference `workspace(id)` or be it. A nullable
+scope column is worse than it looks: a null never equals the context, so such a row is unreachable
+rather than protected. And a plausible wrong answer — `created_by_id` on a table that also carries
+`workspace_id` — produces a policy that is canonical in shape and isolates by the wrong axis, which
+review demonstrated passing. The equivalent assertion for `user-rls` does not exist yet, because the
+table it would point at is a `TABLE_ACCESS_BLOCKERS` entry with no agreed shape; it lands with CV-19.
 
 **A second permissive policy on the same table fails the gate, whatever it says.** Permissive
 policies combine with `OR`, so a second one can only widen what is visible, and widening is invisible
@@ -231,10 +238,11 @@ replaces is a table the application can read every row of, which produces no err
 
 ## Enforcement
 
-`packages/infra/scripts/assert-rls.ts` (G7, `assert:rls`) reads the registry and reports **nine**
+`packages/infra/scripts/assert-rls.ts` (G7, `assert:rls`) reads the registry and reports **ten**
 subchecks separately, each tagged real or vacuous, because they become real at different moments and
 one verdict would let the vacuous ones pass for proven (ADR 0048). **Three are real with no
-migrations. Six are vacuous and say so.**
+migrations. Seven are vacuous and say so**, and the script prints the count so a change in the split
+is visible rather than needing to be noticed.
 
 Real today:
 
@@ -257,12 +265,19 @@ Vacuous until there is a schema, and each says which:
    iterate. ADR 0042's amended Enforcement section first called this real today. It is not, and that
    record now says so.
 5. **Registry to catalogue**, both directions, including the direction ADR 0042 admitted it never
-   checked. Any relation in `public` that is not a table or a partitioned table - a view, a
-   materialized view, a foreign table - fails here rather than being ignored.
+   checked. Relkind and class must agree *both* ways: a view or materialized view must be classified
+   `view`, and a table must not be - the converse went unchecked at first, which made `view` an
+   escape hatch a table could use to skip every graph and policy rule at once. A foreign table fails
+   outright. Views and materialized views are governed by ADR 0051.
 6. **Tenancy graph.** A NOT NULL `uuid` foreign key to `workspace(id)` forces `workspace-rls` and
-   forces the policy onto that column; a `role-grants` table with any transitive foreign-key path to
-   tenant data fails; and a row-scoped table's `scopeColumn` must exist, be a NOT NULL `uuid`, and
-   either reference `workspace(id)` or be it.
+   forces the policy onto that column. Any class carrying no policy of its own - `role-grants` or
+   `view` - fails if it has a transitive foreign-key path to *any* row-scoped table, on the identity
+   axis as well as the tenancy one. A NOT NULL `uuid` column named `workspace_id` forces
+   `workspace-rls` regardless of the graph, because the graph is blind where there is no foreign key
+   and an append-only log deliberately has none. Non-partition `INHERITS` fails outright: it copies
+   NOT NULL and CHECK constraints and never foreign keys, so a child is invisible to both the
+   partition handling and the graph. And a row-scoped table's `scopeColumn` must exist and be a NOT
+   NULL `uuid`; for `workspace-rls` it must also reference `workspace(id)` or be it.
 7. **`workspace-rls` policies.** Per table and per partition: RLS enabled and forced, exactly one
    permissive policy, `polcmd` of `*`, `polwithcheck` null, `polroles` exactly `convert_app`, and
    `pg_get_expr(polqual, polrelid)` equal to the canonical expression derived at runtime.
@@ -271,6 +286,11 @@ Vacuous until there is a schema, and each says which:
    column grants and privileges inherited through a group role are visible. Exact match to
    `appPrivileges` for a table, subset for a partition, no `PUBLIC` grant, and none of `TRUNCATE`,
    `REFERENCES` or `TRIGGER` on any class.
+10. **Definer routines.** A `SECURITY DEFINER` function in `public` owned by a role that can bypass
+    row-level security, and executable by the application, fails - and `EXECUTE` defaults to `PUBLIC`,
+    so there is no `GRANT` in the migration for a reviewer to notice. One without `SET search_path`
+    fails too. This check exists because ADR 0052 made the owner a bypassing role, which converted
+    every such function into a bypass; see that record for the measurement.
 
 **Both of this record's stated gaps were closed on 22 August 2026, the day after it landed**, and
 neither is open any more:

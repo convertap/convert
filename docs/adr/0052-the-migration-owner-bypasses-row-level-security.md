@@ -50,10 +50,14 @@ tenant's requests has no business applying to it. Making the owner subject to po
 protection; it converts correct-looking migrations into silent no-ops, which is a data-integrity
 failure dressed as a security control.
 
-**`convert_app` must not be a member of the owner role, directly or transitively.** Privileges and
-attributes reach a role through membership, so an inherited path to the owner would hand the
-application exactly the bypass this record grants the owner. G7 asserts non-membership; that check is
-real today.
+**`convert_app` must not be able to reach *any* role that bypasses row-level security.** The
+mechanism is `SET ROLE`, not inheritance: role *attributes* are never inherited through membership -
+measured, an `INHERIT` member of a `BYPASSRLS` role still sees one row - but a member may `SET ROLE`
+to anything it reaches and thereby take the attribute on. So the rule is about reachability, not
+about the owner: the first version of this check asked only whether `convert_app` was a member of the
+owner, and review escaped it with `create role rls_escape bypassrls; grant rls_escape to
+convert_app`. G7 walks every reachable role and fails any that is a superuser or holds `BYPASSRLS`.
+That check is real today.
 
 **`FORCE ROW LEVEL SECURITY` stays, and its purpose is stated rather than implied.** It protects
 against a *future* change of ownership — a migration that reassigns a tenant table to a role without
@@ -82,6 +86,23 @@ It also means a mistake in a migration has no second line of defence. Nothing at
 will stop a repair migration from touching the wrong tenant's rows; only review and the staging
 environment will. That is the cost of the capability being useful.
 
+**And it converts every `SECURITY DEFINER` function into a bypass, which the first version of this
+record did not weigh.** A definer function executes with its owner's rights, so while the owner was
+subject to policy - `FORCE ROW LEVEL SECURITY` removes the owner's exemption - such a function was
+still policed. Measured on Postgres 16.13, same function, same caller, same workspace context, only
+the owner's attributes changed:
+
+| function owner | direct read of the table | read through the function |
+|----------------|--------------------------|---------------------------|
+| non-bypassing role | 1 row | 0 rows, policed |
+| bypassing owner, as this record requires | 1 row | **2 rows, every tenant** |
+
+`proacl` defaults to `EXECUTE` for `PUBLIC`, so no `GRANT` appears in the migration for a reviewer to
+notice, and the application needs no privilege it does not already hold. G7 therefore fails any
+`SECURITY DEFINER` routine in `public` owned by a bypassing role and executable by the application,
+and any that omits `SET search_path`. This is a real cost of the decision rather than a footnote:
+the capability the owner gains is inherited by anything the owner creates.
+
 If Railway's role turns out **not** to be a superuser, this assertion fails the first time the gate
 runs against that database, which is the intended outcome: the fix is to grant `BYPASSRLS`
 deliberately and record it, not to weaken the check.
@@ -97,6 +118,14 @@ deliberately and record it, not to weaken the check.
 - *A third role for backfills, holding `BYPASSRLS` and nothing else.* Cleaner in theory, and it is a
   third credential to provision, rotate and get wrong in six Railway variables, for a capability the
   owner needs anyway to alter the tables it owns.
+- *Keep the owner non-bypassing, and have each migration `SET ROLE` to a dedicated bypassing role for
+  its DML step only.* The strongest option on paper, and the one this record should have listed from
+  the start: the bypass is scoped to the statements that need it rather than to every object the
+  owner will ever create, which would have contained the `SECURITY DEFINER` consequence above instead
+  of accepting it. Rejected on the same ground as the per-migration policy handling - it is a manual
+  step in the path of every data migration, and forgetting it produces the silent `UPDATE 0` this
+  record exists to remove. Worth revisiting if definer functions ever become common here, because the
+  balance shifts once there is something for the unscoped bypass to leak through.
 - *Drop `FORCE` since the owner bypasses regardless.* It costs nothing and it is the only thing
   standing between a future ownership change and an open boundary.
 
@@ -113,8 +142,15 @@ today, on both roles**:
 
 **Verified by making it fail** on PostgreSQL 16.13: with the owner connection pointed at a freshly
 created `nosuperuser nobypassrls` role, the gate fails naming that role; granting it `BYPASSRLS`
-makes it pass. Granting `convert_app` membership in the owner role fails the membership check while
-every other subcheck still passes, which is the case that would otherwise be invisible.
+makes it pass. `create role rls_escape bypassrls; grant rls_escape to convert_app` fails the
+reachability check while every other subcheck still passes, which is the case that would otherwise be
+invisible.
+
+**The owner assertion is exercised by a dedicated CI step**, `G7 owner must not be able to be
+restricted`, which points `DATABASE_URL` at a deliberately non-bypassing role and requires the gate
+to exit non-zero. Without it the assertion could never fail where it runs: CI connects as `postgres`,
+a superuser, so the check was satisfied by construction — which is the ADR 0048 defect class, and it
+was pointed out one commit after this record claimed the assertion was real.
 
 `docs/deployment-runbook.md` carries the operational half: which Railway variable holds which role,
 and that the owner credential is the one with unrestricted read.

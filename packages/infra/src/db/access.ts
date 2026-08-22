@@ -42,6 +42,20 @@ export const TENANT_TABLE = 'workspace';
 export const TENANT_KEY = 'id';
 
 /**
+ * The conventional name of a tenant column, checked *as well as* the foreign-key graph and not
+ * instead of it.
+ *
+ * The graph is the stronger signal and it is the one that catches a child table holding tenant data
+ * through its parent. It is also blind whenever there is no foreign key, and a table with a
+ * `workspace_id` and no FK is not exotic - it is the idiomatic shape for an append-only event or
+ * audit log, written that way deliberately so a row outlives the entity it describes. Review built
+ * exactly that, classified it `role-grants` with a reason that reads perfectly well, and read every
+ * tenant's rows through it. The name check existed, was deleted as redundant when the graph landed,
+ * and is back because the two are complements.
+ */
+export const TENANT_COLUMN = 'workspace_id';
+
+/**
  * The session variable each row-level-security class scopes by.
  *
  * `app.current_workspace` is the tenant boundary of ADR 0002 and ADR 0042. `app.current_user` is
@@ -64,9 +78,12 @@ export type TableAccess =
       kind: 'workspace-rls';
       /**
        * The column the policy scopes by. Almost always `workspace_id`; it is `id` on `workspace`
-       * itself, which is why this is not a fixed literal. G7 asserts the column exists, is a NOT
-       * NULL `uuid`, and either references `workspace(id)` or *is* it - so a plausible-looking
-       * wrong answer like `created_by_id` fails rather than isolating by the wrong axis.
+       * itself, which is why this is not a fixed literal. G7 asserts the column exists and is a NOT
+       * NULL `uuid`, and for `workspace-rls` additionally that it references `workspace(id)` or *is*
+       * it - so a plausible-looking wrong answer like `created_by_id` fails rather than isolating by
+       * the wrong axis. **For `user-rls` that last assertion does not exist**, because the table it
+       * would point at (`user`) is still a `TABLE_ACCESS_BLOCKERS` entry with no agreed shape; it
+       * lands with CV-19.
        */
       scopeColumn: string;
       appPrivileges: readonly TablePrivilege[];

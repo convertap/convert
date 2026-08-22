@@ -2,15 +2,16 @@
 
 **Status:** Accepted
 **Date:** 2026-08-22
-**Supersedes:** 0050, in one part only — the blanket refusal of views and materialized views
+**Supersedes:** - (ADR 0050 leaves views and materialized views to this record; both land in the same unlanded change, so nothing shipped is being replaced)
 **Superseded by:** -
 
 ## Context
 
-ADR 0050 refused views and materialized views outright. That was the honest placeholder at the time:
-independent review had demonstrated both leaking a full tenant table to the application role, and
-nobody had decided how they should be scoped, so failing the build was better than modelling them
-wrongly. The record said so in those words.
+ADR 0050's first draft refused views and materialized views outright. That was the honest
+placeholder: independent review had demonstrated both leaking a full tenant table to the application
+role, and nobody had decided how they should be scoped, so failing the build beat modelling them
+wrongly. Neither record had landed, so this one takes the decision rather than superseding a shipped
+one, and 0050 now leaves the subject here.
 
 The refusal has a cost that lands on the first person who needs a view: a red build, no registry
 class available to them, and an ADR to write before they can proceed. Reporting screens are a
@@ -105,7 +106,11 @@ this read" without parsing SQL.
 is **vacuous today because the schema holds no views and no migrations exist**:
 
 - a view in `public` without `security_invoker = true` in its `reloptions` fails, naming the option;
-- a view or materialized view absent from `TABLE_ACCESS` fails as unclassified, like any relation;
+- a view or materialized view absent from `TABLE_ACCESS` fails as unclassified, like any relation,
+  and the converse is checked too: a *table* classified `view` fails. Leaving that direction
+  unchecked made `view` the least-scrutinised class in the registry - no `reason`, no policy
+  requirement - and therefore an escape hatch a table could use to skip the graph rules entirely.
+  Review demonstrated it by changing one word in a previously-leaking entry;
 - a materialized view whose transitive base relations include a `workspace-rls` or `user-rls` table
   fails, naming the path it reads through;
 - a `view` entry's `appPrivileges` are compared as effective access, exactly as for a table, so a

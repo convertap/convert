@@ -10,6 +10,7 @@ import {
   SCOPE_GUC,
   TABLE_ACCESS,
   TABLE_ACCESS_BLOCKERS,
+  TENANT_COLUMN,
   TENANT_KEY,
   TENANT_TABLE,
   VIEW_OPTION,
@@ -19,12 +20,12 @@ import type { TableAccess } from '../src/db/access';
 import * as schema from '../src/db/schema';
 
 /**
- * Gate G7, the assertion half. Nine checks, reported one line each and tagged real or vacuous.
+ * Gate G7, the assertion half. Ten checks, reported one line each and tagged real or vacuous.
  *
  * They become real at different moments, and a single verdict would let the vacuous ones pass for
- * proven (ADR 0048). Three are real with no migrations: the application role's attributes, every
- * declared Drizzle table being classified, and the behavioural isolation probe. The other six need
- * a public table and say so in their own line.
+ * proven (ADR 0048). Three are real with no migrations: the database roles, every declared Drizzle
+ * table being classified, and the behavioural isolation probe. The other seven need a schema and say
+ * so in their own line.
  *
  * The registry the checks read is `src/db/access.ts` (ADR 0050).
  *
@@ -268,6 +269,15 @@ const main = async () => {
   if (!role) {
     roleFailures.push('could not read the application role attributes');
   } else {
+    // Everything below asks about APP_ROLE by name - has_table_privilege, the policy role set - so a
+    // DATABASE_URL_APP pointed at some other role would check a role that is not the one connecting.
+    if (role.current_user !== APP_ROLE) {
+      roleFailures.push(
+        `DATABASE_URL_APP connects as ${role.current_user}, not ${APP_ROLE}. Every privilege and ` +
+          'policy check below names the expected role, so they would describe a role that is not ' +
+          'the one the application uses',
+      );
+    }
     if (role.rolsuper) {
       roleFailures.push(`${role.current_user}: is a SUPERUSER, so it bypasses every RLS policy`);
     }
@@ -353,10 +363,20 @@ const main = async () => {
   // every table a later migration creates. Deleting the ALTER DEFAULT PRIVILEGES statement from
   // bootstrap.sql does not undo one already installed in an existing database - that needs an
   // explicit REVOKE - so the catalogue state is asserted rather than assumed.
-  const defaults = await db.execute<{ schema: string; grantee: string; privilege: string }>(sql`
+  const defaults = await db.execute<{
+    schema: string;
+    grantee: string;
+    privilege: string;
+    grantor: string;
+  }>(sql`
     select n.nspname as schema,
            coalesce(pg_get_userbyid(a.grantee), 'PUBLIC') as grantee,
-           a.privilege_type as privilege
+           a.privilege_type as privilege,
+           -- defaclrole is load-bearing in the remediation: ALTER DEFAULT PRIVILEGES without a
+           -- FOR ROLE clause targets the current role, so the command this check used to print was
+           -- a no-op against an entry another role created, and an operator following it watched
+           -- the gate stay red and concluded the tool was wrong.
+           pg_get_userbyid(d.defaclrole) as grantor
     from pg_default_acl d
     join pg_namespace n on n.oid = d.defaclnamespace
     cross join lateral aclexplode(d.defaclacl) as a
@@ -367,8 +387,8 @@ const main = async () => {
       roleFailures.push(
         `default privileges in schema ${row.schema} grant ${row.privilege} on future tables to ` +
           `${row.grantee}, so every table a migration creates holds it whatever TABLE_ACCESS ` +
-          `declares. Revoke it: alter default privileges in schema ${row.schema} revoke ` +
-          `${row.privilege} on tables from ${row.grantee}`,
+          `declares. Revoke it: alter default privileges for role ${row.grantor} in schema ` +
+          `${row.schema} revoke ${row.privilege} on tables from ${row.grantee}`,
       );
     }
   }
@@ -378,9 +398,9 @@ const main = async () => {
     failures: roleFailures,
     real: true,
     verdict:
-      `${role?.current_user} is neither superuser nor BYPASSRLS and is not a member of the owner; ` +
-      `${ownerRole?.current_user} can bypass RLS as ADR 0052 requires; no default privilege ` +
-      'grants rights on future tables',
+      `${role?.current_user} is ${APP_ROLE}, is neither superuser nor BYPASSRLS, and can reach ` +
+      `no role that bypasses; ${ownerRole?.current_user} can bypass RLS as ADR 0052 requires; no ` +
+      'default privilege grants rights on future tables',
   });
 
   // The roles are a precondition, not one finding among nine, so this reports and stops rather than
@@ -418,7 +438,7 @@ const main = async () => {
     left join pg_class rt on rt.oid = pg_partition_root(c.oid)
     where n.nspname = 'public'
       and c.relkind in ('r', 'p', 'v', 'm', 'f')
-      and c.relname not like 'rls\_%'
+      and c.relname not in ('rls_probe', 'rls_expr_probe_workspace_rls', 'rls_expr_probe_user_rls')
   `);
 
   const tables = relations.rows.filter((r) =>
@@ -522,6 +542,25 @@ const main = async () => {
   // and migrations run as the owner. Measured on Postgres 16.13: a plain view over a policed table
   // returned every tenant's rows where the table returned one.
   const views = relations.rows.filter((r) => r.relkind === 'v' || r.relkind === 'm');
+
+  // Both directions. The first version checked only that a view is classified `view`, and left the
+  // converse unchecked - so a real table classified `view` skipped the graph checks, the policy
+  // checks and the reason requirement all at once. Review turned the previously-leaking `lead_note`
+  // shape back on by changing one word in its entry.
+  for (const table of tables) {
+    // Only real tables. `tables` also holds views now that they are classifiable, and iterating all
+    // of it reported every correctly-classified view as a table - caught by the positive control.
+    if (table.relkind !== 'r' && table.relkind !== 'p') continue;
+    const access = entryFor(table);
+    if (access && access.kind === 'view') {
+      catalogueFailures.push(
+        `${table.relname}: is a ${table.relkind === 'p' ? 'partitioned table' : 'table'} classified ` +
+          'view. The view class describes a view or a materialized view only, and it is the class ' +
+          'with no reason field and no policy requirement, so it is the last one a table may use',
+      );
+    }
+  }
+
   for (const view of views) {
     const access = REGISTRY[view.relname];
     if (access && access.kind !== 'view') {
@@ -569,7 +608,8 @@ const main = async () => {
         join pg_class base on base.oid = d.refobjid
         where base.oid <> closure.rel and closure.depth < 32
       )
-      select top_rel.relname as viewname,
+      select distinct
+             top_rel.relname as viewname,
              base.relname as base,
              coalesce(rt.relname, base.relname) as root,
              closure.path
@@ -619,7 +659,8 @@ const main = async () => {
     real: relations.rows.length > 0,
     verdict:
       relations.rows.length > 0
-        ? `${relations.rows.length} relation(s) in public classified (${tables.length} table(s), ` +
+        ? `${relations.rows.length} relation(s) in public classified ` +
+          `(${tables.filter((t) => t.relkind === 'r' || t.relkind === 'p').length} table(s), ` +
           `${views.filter((v) => v.relkind === 'v').length} view(s), ` +
           `${views.filter((v) => v.relkind === 'm').length} materialized)`
         : 'there is nothing in the public schema yet, so neither direction had anything to iterate',
@@ -674,7 +715,11 @@ const main = async () => {
         if (seen.has(parent)) continue;
         seen.add(parent);
         const access = REGISTRY[parent];
-        if (parent === TENANT_TABLE || (access && access.kind === 'workspace-rls')) {
+        // Any row-scoped parent, not just the tenancy axis. Stopping only at `workspace-rls` walked
+        // straight through `user-rls` - so a table hanging off `session` was reachable from every
+        // user's rows while carrying a reason about being "reached only through a scoped session".
+        // Same bug as the one this walk was written to fix, on ADR 0047's axis instead of ADR 0002's.
+        if (parent === TENANT_TABLE || (access && isRlsAccess(access))) {
           return [...path, parent];
         }
         queue.push({ table: parent, path: [...path, parent] });
@@ -684,17 +729,67 @@ const main = async () => {
   };
 
   for (const [name, access] of ENTRIES) {
-    if (access.kind !== 'role-grants') continue;
+    // Every class that carries no policy of its own, which is `role-grants` and `view`. Gating this
+    // on `role-grants` alone is what made `kind: 'view'` an escape hatch.
+    if (isRlsAccess(access)) continue;
     if (!inDatabase.has(name)) continue;
     const path = pathToTenantData(name);
     if (path) {
       graphFailures.push(
-        `${name}: is classified role-grants and reaches tenant data by foreign key ` +
+        `${name}: is classified ${access.kind} and reaches row-scoped data by foreign key ` +
           `(${path.join(' -> ')}). Grants control operations, never row visibility, so every row ` +
           'of it is readable by the application whatever its reason says. It needs a policy of ' +
           'its own, or a tenant column to scope by',
       );
     }
+  }
+
+  // (b2) the conventional tenant column, checked as well as the graph rather than instead of it.
+  // The graph is blind when there is no foreign key, and an append-only event log deliberately has
+  // none so its rows outlive what they describe. That shape passed as role-grants and read every
+  // tenant's rows. This check existed, was deleted as redundant when the graph landed, and is back.
+  for (const col of columns.rows) {
+    if (col.column !== TENANT_COLUMN) continue;
+    if (col.type !== 'uuid' || !col.notNull) continue;
+    const table = inDatabase.get(col.relname);
+    const access = table ? entryFor(table) : REGISTRY[col.relname];
+    if (!access) continue;
+    if (access.kind !== 'workspace-rls') {
+      graphFailures.push(
+        `${col.relname}: carries a NOT NULL uuid ${TENANT_COLUMN} and is classified ` +
+          `${access.kind}. Whatever else is true of it, a column with that name holds a tenant id, ` +
+          'so the table is tenant data and needs the tenancy policy - a missing foreign key is not ' +
+          'evidence of anything',
+      );
+    } else if (access.scopeColumn !== TENANT_COLUMN) {
+      graphFailures.push(
+        `${col.relname}: carries ${TENANT_COLUMN} but scopes by ${access.scopeColumn}, so the ` +
+          'policy compares something other than the column holding the tenant id',
+      );
+    }
+  }
+
+  // (b3) non-partition inheritance. `INHERITS` copies NOT NULL and CHECK constraints and never
+  // foreign keys, and a child is relkind 'r' with relispartition false and no partition root - so
+  // both the partition handling and the graph are blind to it. Querying the parent does apply the
+  // parent's policy to child rows, which is what makes the reason plausible; querying the child
+  // directly does not, which is what makes it a leak.
+  const inherited = await db.execute<{ child: string; parent: string }>(sql`
+    select child.relname as child, parent.relname as parent
+    from pg_inherits i
+    join pg_class child on child.oid = i.inhrelid
+    join pg_class parent on parent.oid = i.inhparent
+    join pg_namespace n on n.oid = child.relnamespace
+    where n.nspname = 'public' and child.relispartition = false
+  `);
+  for (const row of inherited.rows) {
+    graphFailures.push(
+      `${row.child}: inherits ${row.parent} without being a partition of it. Inheritance copies ` +
+        'NOT NULL and CHECK constraints but never foreign keys, so nothing ties the child to the ' +
+        'tenancy graph, and reading the child directly does not apply the parent policy that ' +
+        'reading the parent does. Use declarative partitioning, or give the child its own entry ' +
+        'and its own policy',
+    );
   }
 
   // (c) a row-scoped table's scope column has to be what it claims to be.
@@ -892,7 +987,7 @@ const main = async () => {
       ]) as p(priv)
       where n.nspname = 'public'
         and c.relkind in ('r', 'p', 'v', 'm')
-        and c.relname not like 'rls\_%'
+        and c.relname not in ('rls_probe', 'rls_expr_probe_workspace_rls', 'rls_expr_probe_user_rls')
     `);
 
     for (const table of tables) {
@@ -976,7 +1071,70 @@ const main = async () => {
         : `there are no public tables yet (${ENTRIES.length} classified), so no privilege was compared`,
   });
 
-  // ---- 9. does isolation actually hold? Behavioural, on a fixture table. ---------------------
+  // ---- 9. SECURITY DEFINER routines, which ADR 0052 turned into bypasses. ---------------------
+  //
+  // A function is not a relation, so nothing here had an opinion about one. That was defensible
+  // while the owner was subject to policy: FORCE ROW LEVEL SECURITY removed the owner's exemption,
+  // so a definer function owned by the owner was still policed. ADR 0052 deliberately removed that,
+  // which converts every such function into a full bypass - measured, same function and caller, only
+  // the owner's attributes changed: 0 rows policed, 2 rows (every tenant) once the owner could
+  // bypass. And `proacl` defaults to EXECUTE for PUBLIC, so no GRANT appears anywhere for a reviewer
+  // to notice and the application needs no privilege it does not already hold.
+  //
+  // This is the cost ADR 0052 undercounted, so it is checked rather than described.
+
+  const definerFailures: string[] = [];
+  const definers = await db.execute<{
+    routine: string;
+    owner: string;
+    canBypass: boolean;
+    appCanExecute: boolean;
+    hasSearchPath: boolean;
+  }>(sql`
+    select p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' as routine,
+           o.rolname as owner,
+           (o.rolsuper or o.rolbypassrls) as "canBypass",
+           has_function_privilege(${APP_ROLE}, p.oid, 'EXECUTE') as "appCanExecute",
+           coalesce(
+             exists (select 1 from unnest(p.proconfig) as cfg where cfg like 'search\\_path=%'),
+             false
+           ) as "hasSearchPath"
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    join pg_roles o on o.oid = p.proowner
+    where n.nspname = 'public' and p.prosecdef
+  `);
+
+  for (const routine of definers.rows) {
+    if (routine.canBypass && routine.appCanExecute) {
+      definerFailures.push(
+        `${routine.routine}: is SECURITY DEFINER, owned by ${routine.owner} which can bypass ` +
+          `row-level security, and ${APP_ROLE} may execute it. It therefore reads every tenant's ` +
+          'rows on behalf of a caller the policies would have scoped, and EXECUTE defaults to ' +
+          'PUBLIC so no GRANT appears in the migration for a reviewer to notice. Own it with a ' +
+          'non-bypassing role, or revoke EXECUTE from PUBLIC and from the application',
+      );
+    }
+    if (!routine.hasSearchPath) {
+      definerFailures.push(
+        `${routine.routine}: is SECURITY DEFINER without SET search_path, so an unqualified name ` +
+          `inside it resolves through the caller's search_path, and ${APP_ROLE} can create ` +
+          'objects in a temp schema that precedes public',
+      );
+    }
+  }
+
+  subchecks.push({
+    name: 'definer routines',
+    failures: definerFailures,
+    real: definers.rows.length > 0,
+    verdict:
+      definers.rows.length > 0
+        ? `${definers.rows.length} SECURITY DEFINER routine(s) are owned by a non-bypassing role or unreachable from ${APP_ROLE}`
+        : 'there are no SECURITY DEFINER routines in public, so there was nothing to check',
+  });
+
+  // ---- 10. does isolation actually hold? Behavioural, on a fixture table. --------------------
   //
   // The checks above are necessary and not sufficient: they prove the role *could* be subject to
   // policy and that a policy reads as intended, not that a cross-tenant read returns nothing. This
