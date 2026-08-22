@@ -4,7 +4,7 @@ How the architecture in [`architecture.md`](./architecture.md) stays true once s
 
 Stack is settled: **Next.js web, NestJS on the Fastify adapter, one worker, one Postgres** (ADR 0001, checklist S1).
 
-**Last updated:** 2026-08-21
+**Last updated:** 2026-08-22
 
 ---
 
@@ -86,7 +86,7 @@ Two kinds. A machine gate blocks the merge; a human gate is a checklist line som
 | G4 | Lint passes, no new warnings | machine | merge |
 | G5 | Unit tests pass | machine | merge |
 | G6 | An invariant test exists and passes for every I1–I12 | machine | merge |
-| G7 | Migrations apply to a fresh database, every tenant table has RLS the application role is subject to, and the column conventions hold | machine | merge |
+| G7 | Migrations apply to a fresh database, every declared table is classified in `TABLE_ACCESS` and carries exactly the policy or grants its class demands, and the column conventions hold | machine | merge |
 | G8 | Integration tests pass against real Postgres | machine | merge |
 | G9 | Performance budget met on the pipeline and contact screens | machine | merge |
 | G10 | OpenAPI spec regenerates with no diff, and no endpoint is undocumented. Both halves real since ADR 0045 | machine | merge |
@@ -97,6 +97,12 @@ Two kinds. A machine gate blocks the merge; a human gate is a checklist line som
 | G15 | Every Notion page derived from these documents is current, or the drift is acknowledged | machine | merge |
 
 G6 and G7 are the two most easily skipped and the two that matter most. G6 turns the architecture into tests that fail when someone contradicts it. G7 is the difference between multi-tenancy and a data breach with a plausible-looking query.
+
+G7 reports ten subchecks separately rather than one verdict, because they become real at different moments and a summary line would let the vacuous ones read as proven (ADR 0048). **Three are real today**: the database roles, every table declared in `schema.ts` appearing in `TABLE_ACCESS`, and the behavioural cross-tenant probe on a fixture table. The other seven need a schema and each says so in its own line, and the script prints the count so a change in the split is visible rather than needing to be noticed. `TABLE_ACCESS` (ADR 0050) replaced `TENANT_TABLES` and `NON_TENANT_TABLES`, which classified by whether a table carried a `workspace_id` column and so had nothing to say about a table protected some other way.
+
+**Every view sets `security_invoker = true`** (ADR 0051). Without it a view reads its base tables as its owner, and migrations run as the owner, so it bypasses every policy on them — measured, not theorised: a plain view over a policed table returned every tenant's rows where the table returned one. The option is required on every view, whatever it selects from, because a view's base tables change and a rule with a condition in it is one people get wrong. **A materialized view may not read a row-scoped table**, checked through the dependency graph, because row-level security is never applied when reading one and no option changes that; the replacement is a real table maintained by the worker with its own policy.
+
+**Migrations are not tenant-scoped, deliberately** (ADR 0052). The `DATABASE_URL` role must be able to bypass row-level security, and G7 asserts it: a migration operates on every tenant's rows by definition, and an ordinary owner against a `FORCE`d table turns a backfill into `UPDATE 0` that reports success — the worst outcome under forward-only migrations. G7 also asserts the two roles are distinct, that the app connection really is `convert_app`, and that `convert_app` can reach **no** role that bypasses. The mechanism there is `SET ROLE`, not inheritance — role attributes are never inherited through membership, but a member can `SET ROLE` to anything it reaches and take the attribute on, so `grant some_bypassing_role to convert_app` is a full escape. And because the owner is now a bypassing role, a `SECURITY DEFINER` function it owns is one too, with `EXECUTE` defaulting to `PUBLIC`; G7 fails any such routine the application can execute, and any without `SET search_path`. The tenancy boundary is therefore a property of the application's connection, not of the database as a whole.
 
 CI jobs are written so they pass on an empty repository and tighten automatically as the corresponding code lands. A pipeline that is red from day one gets ignored, then disabled.
 

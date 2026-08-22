@@ -288,6 +288,30 @@ jobs:
           DATABASE_URL_APP: postgres://convert_app:ci-throwaway@localhost:5432/convert_test
         run: pnpm --filter @convert/infra assert:rls
 
+      # ADR 0052 requires the migration owner to be able to bypass row-level security, because a
+      # backfill against a FORCE'd table otherwise reports success having changed nothing. The step
+      # above connects as postgres, a superuser, so that assertion is satisfied by construction
+      # there and could never go red - which is the ADR 0048 trap: a check named as real that cannot
+      # fail where it runs. This step points DATABASE_URL at a deliberately restricted role and
+      # requires the gate to reject it, so the assertion is exercised rather than assumed.
+      - name: G7 owner must not be able to be restricted
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d convert_test -v ON_ERROR_STOP=1 -c \
+            "drop role if exists ci_restricted_owner;
+             create role ci_restricted_owner login password 'ci-throwaway' nosuperuser nobypassrls;
+             grant all on schema public to ci_restricted_owner;"
+          if DATABASE_URL=postgres://ci_restricted_owner:ci-throwaway@localhost:5432/convert_test \
+             DATABASE_URL_APP=postgres://convert_app:ci-throwaway@localhost:5432/convert_test \
+             pnpm --filter @convert/infra assert:rls; then
+            echo "::error::assert:rls accepted a migration owner that cannot bypass RLS. ADR 0052 requires it to fail."
+            exit 1
+          fi
+          echo "assert:rls rejected the restricted owner, as ADR 0052 requires"
+          psql -h localhost -U postgres -d convert_test -v ON_ERROR_STOP=1 -c \
+            "drop owned by ci_restricted_owner; drop role ci_restricted_owner;"
+
       # G7 - the column conventions of ADR 0046, read from the catalogue rather than from a
       # reviewer's memory: money as integer pesewas in bigint and never numeric or a float,
       # rates as integer basis points, every timestamp timestamptz, created_at everywhere,

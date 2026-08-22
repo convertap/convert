@@ -42,16 +42,37 @@ end
 $$;
 
 grant usage on schema public to convert_app;
-grant select, insert, update, delete on all tables in schema public to convert_app;
-grant usage, select on all sequences in schema public to convert_app;
 
--- And on everything migrations create later, so a new tenant table is not silently
--- unreadable by the application.
+-- Table privileges are NOT granted here, and there is no ALTER DEFAULT PRIVILEGES for
+-- tables. Both used to exist, on the reasoning that a new tenant table should not be
+-- silently unreadable by the application. ADR 0050 reversed it: a blanket grant makes
+-- every future table fully readable and writable by convert_app whatever TABLE_ACCESS
+-- declares about it, so the registry would describe the intent while the database did
+-- something else. Silently readable is the worse of the two failures, and the registry
+-- now says which tables should be which.
+--
+-- So each migration grants exactly what its table's TABLE_ACCESS entry declares, and G7
+-- compares the two in both directions. A table nobody granted anything on fails loudly
+-- at its first query, which is a better failure than one nobody notices.
+
+-- Deleting the statement is not the same as undoing it. Any database where an earlier
+-- bootstrap ran still carries the pg_default_acl entry granting CRUD on every future
+-- table, and a catalogue entry survives the script that created it - so the first
+-- migration there would still hand convert_app blanket access whatever TABLE_ACCESS says.
+-- Revoking is the only thing that removes it, the REVOKE has to mirror the original GRANT
+-- exactly to match, and this is idempotent: revoking a default privilege that was never
+-- granted is a no-op. G7 asserts pg_default_acl is clean afterwards, because this file
+-- running is not evidence that it did.
 alter default privileges in schema public
-  grant select, insert, update, delete on tables to convert_app;
+  revoke select, insert, update, delete on tables from convert_app;
+
+-- Sequences stay, and should stay unused: ADR 0043 makes the ULID the primary key, so no
+-- table needs a serial. The grant costs nothing while there are none and is one less
+-- thing to remember if a future table has a genuine reason for one.
+grant usage, select on all sequences in schema public to convert_app;
 alter default privileges in schema public
   grant usage, select on sequences to convert_app;
 
 -- Explicitly withheld, for the reader: no CREATE on the schema, so convert_app cannot
--- add a table that escapes TENANT_TABLES, and no ownership, so it cannot disable RLS.
+-- add a table that escapes TABLE_ACCESS, and no ownership, so it cannot disable RLS.
 revoke create on schema public from convert_app;
