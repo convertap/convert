@@ -331,54 +331,59 @@ const main = async () => {
     }
   }
 
-  // Membership is a capability, not just a privilege path: a member can SET ROLE to any role it
-  // reaches, whatever INHERIT says, and thereby take on that role's attributes. So the question is
-  // not "is it a member of the owner" - the first version of this check asked exactly that, and
-  // review escaped it in one line with `create role rls_escape bypassrls; grant rls_escape to
-  // convert_app`. The question is whether the application role can reach *any* role that bypasses.
+  // Membership is a capability, and the question is what the application can *effectively* do, not
+  // what the graph looks like. The first version asked "is it a member of the owner" and review
+  // escaped it with `create role rls_escape bypassrls; grant rls_escape to convert_app`. The second
+  // walked the graph recursively with a depth bound of 16, and review escaped that by building a
+  // seventeen-edge chain: the gate printed "can reach no role that bypasses" and the application
+  // then ran `set role convert_auth` successfully.
+  //
+  // So the bound is gone and Postgres answers instead. `pg_has_role(..., 'SET')` is true exactly
+  // when the role can `SET ROLE` to the target, at any depth and through any mix of INHERIT and SET
+  // options, and `USAGE` is true exactly when it inherits the target's privileges. Both matter and
+  // they are not the same: a chain granted `WITH INHERIT FALSE, SET FALSE` confers neither, and the
+  // previous message called it an escape anyway, which was a false positive with a confident
+  // explanation attached.
   if (role) {
     const reachable = await db.execute<{
       rolname: string;
       rolsuper: boolean;
       rolbypassrls: boolean;
-      path: string;
+      can_set: boolean;
+      inherits: boolean;
     }>(sql`
-      with recursive climb(oid, path, depth) as (
-        select r.oid, r.rolname::text, 0
-        from pg_roles r
-        where r.rolname = ${role.current_user}
-        union all
-        select parent.oid, climb.path || ' -> ' || parent.rolname, climb.depth + 1
-        from climb
-        join pg_auth_members m on m.member = climb.oid
-        join pg_roles parent on parent.oid = m.roleid
-        -- pg_auth_members cannot hold a cycle, but depth is bounded anyway rather than trusting it.
-        where climb.depth < 16
-      )
-      select r.rolname, r.rolsuper, r.rolbypassrls, climb.path
-      from climb
-      join pg_roles r on r.oid = climb.oid
-      where climb.depth > 0 and (r.rolsuper or r.rolbypassrls or r.rolname = ${AUTH_ROLE})
+      select r.rolname,
+             r.rolsuper,
+             r.rolbypassrls,
+             pg_has_role(${role.current_user}, r.oid, 'SET') as can_set,
+             pg_has_role(${role.current_user}, r.oid, 'USAGE') as inherits
+      from pg_roles r
+      where r.rolname <> ${role.current_user}
+        and (r.rolsuper or r.rolbypassrls or r.rolname = ${AUTH_ROLE})
     `);
     for (const row of reachable.rows) {
-      // convert_auth bypasses nothing, which is exactly why the first version of this check
-      // ignored it and why review escaped the whole design with one statement:
-      // `grant convert_auth to convert_app`. G7 stayed green and printed "can reach no role that
-      // bypasses" while the application could SET ROLE to the holder of the permissive policy on
-      // `user` and read every account. ADR 0054's Enforcement section demanded this assertion and
-      // the first implementation did not contain it. The integration test caught it; the gate did
-      // not.
-      const why =
-        row.rolname === AUTH_ROLE
-          ? `owns the identity lookup functions and holds the permissive policy on the tables they ` +
-            `read, so reaching it hands over every account it can see`
-          : row.rolsuper
-            ? 'is a SUPERUSER'
-            : 'holds BYPASSRLS';
+      // Role attributes are never inherited, so for a bypassing role only SET ROLE matters. For
+      // the identity role both do: SET ROLE takes on its policies, and inheritance hands over the
+      // privileges those policies gate.
+      const isAuth = row.rolname === AUTH_ROLE;
+      const dangerous = isAuth ? row.can_set || row.inherits : row.can_set;
+      if (!dangerous) continue;
+
+      const how = row.can_set
+        ? row.inherits
+          ? 'can SET ROLE to it and inherits its privileges'
+          : 'can SET ROLE to it'
+        : 'inherits its privileges';
+      const why = isAuth
+        ? 'owns the identity lookup functions and holds the permissive policy on the tables they ' +
+          'read, so reaching it exposes every account it can see'
+        : row.rolsuper
+          ? 'is a SUPERUSER'
+          : 'holds BYPASSRLS';
       roleFailures.push(
-        `${role.current_user} can reach ${row.rolname}, which ${why} (${row.path}). A member can ` +
-          'SET ROLE to anything it reaches regardless of INHERIT, so the application can take on ' +
-          'that role and every policy stops applying to it',
+        `${role.current_user} can reach ${row.rolname}, and ${how}. That role ${why}. Postgres was ` +
+          'asked directly with pg_has_role rather than walked to a fixed depth, so no length of ' +
+          'membership chain hides this',
       );
     }
   }
@@ -393,7 +398,7 @@ const main = async () => {
     privilege: string;
     grantor: string;
   }>(sql`
-    select n.nspname as schema,
+    select coalesce(n.nspname, 'every schema') as schema,
            coalesce(pg_get_userbyid(a.grantee), 'PUBLIC') as grantee,
            a.privilege_type as privilege,
            -- defaclrole is load-bearing in the remediation: ALTER DEFAULT PRIVILEGES without a
@@ -402,9 +407,15 @@ const main = async () => {
            -- the gate stay red and concluded the tool was wrong.
            pg_get_userbyid(d.defaclrole) as grantor
     from pg_default_acl d
-    join pg_namespace n on n.oid = d.defaclnamespace
+    -- LEFT join, and that is the whole finding. A default privilege created without IN SCHEMA has
+    -- defaclnamespace = 0, which matches no pg_namespace row, so an inner join silently dropped
+    -- every global entry: the gate printed "no default privilege grants rights on future tables"
+    -- while one granted SELECT on every future table in every schema.
+    left join pg_namespace n on n.oid = d.defaclnamespace
     cross join lateral aclexplode(d.defaclacl) as a
     where d.defaclobjtype = 'r'
+      -- The grantor's own entry on its own future objects is not a grant to anybody else.
+      and a.grantee <> d.defaclrole
   `);
   for (const row of defaults.rows) {
     // Any grantee, not only the application role and PUBLIC. Review granted a default privilege to
@@ -412,14 +423,20 @@ const main = async () => {
     // tables" - true of the two names it looked at, and false of the database. The next table
     // created would have carried an undeclared grant, which is the failure mode the registry
     // exists to prevent, arriving one migration later than the mistake.
-    if (row.grantee !== AUTH_ROLE) {
-      roleFailures.push(
-        `default privileges in schema ${row.schema} grant ${row.privilege} on future tables to ` +
-          `${row.grantee}, so every table a migration creates holds it whatever TABLE_ACCESS ` +
-          `declares. Revoke it: alter default privileges for role ${row.grantor} in schema ` +
-          `${row.schema} revoke ${row.privilege} on tables from ${row.grantee}`,
-      );
-    }
+    // Every grantee, with no exemption. Two earlier versions were narrower and review walked
+    // through both: the first looked only at the application role and PUBLIC, so a default grant to
+    // a third role passed; the second exempted convert_auth, and a blanket future-table grant to
+    // the identity role is nothing like the SELECT on AUTH_READER_TABLES the registry declares. A
+    // default privilege is the one grant that reaches tables nobody has written yet, so the
+    // registry cannot describe it and it must not exist.
+    const scope = row.schema === 'every schema' ? 'in every schema' : `in schema ${row.schema}`;
+    const remedy = row.schema === 'every schema' ? '' : ` in schema ${row.schema}`;
+    roleFailures.push(
+      `default privileges ${scope} grant ${row.privilege} on future tables to ${row.grantee}, so ` +
+        'every table a migration creates holds it whatever TABLE_ACCESS declares. Revoke it: ' +
+        `alter default privileges for role ${row.grantor}${remedy} revoke ${row.privilege} on ` +
+        `tables from ${row.grantee}`,
+    );
   }
 
   subchecks.push({
@@ -1422,12 +1439,16 @@ const main = async () => {
 
   // ---- 9b. the identity functions match their registry, in both directions. -------------------
   //
-  // AUTH_FUNCTIONS in access.ts described itself as a registry the gate compares against. It was
-  // not: nothing imported it, and review proved three separate mutations passed a green gate.
-  // Flipping a function to SECURITY INVOKER dropped it out of the definer query entirely.
-  // `grant execute ... to public` passed, contradicting the migration's own revoke. And
-  // `alter role convert_auth login` passed, because bootstrap asserts attributes the gate never
-  // rechecks. A registry nothing reads is a comment.
+  // AUTH_FUNCTIONS described itself as a registry the gate compares against and nothing imported
+  // it, so review passed three mutations through a green gate. The first version of this subcheck
+  // fixed that and matched on the bare function *name*, which review then walked through twice: a
+  // registered name with a different argument signature passed, and an extra overload owned by
+  // convert_auth passed while the verdict counted three matches against a two-entry registry. An
+  // overload is a fully executable read path holding the identity role's visibility.
+  //
+  // So the key is (schema, name, argument types), exactly one match is required per entry, and
+  // anything convert_auth owns in *any* schema and of any routine kind has to be registered. The
+  // earlier version filtered to `public`, and a lookalike one schema over was invisible.
   const identityFailures: string[] = [];
 
   const authRole = await db.execute<{
@@ -1455,15 +1476,18 @@ const main = async () => {
     }
     if (authRoleRow.rolsuper || authRoleRow.rolbypassrls) {
       identityFailures.push(
-        `${AUTH_ROLE} is superuser or holds BYPASSRLS, which makes every function it owns a hole ` +
+        `${AUTH_ROLE} is superuser or holds BYPASSRLS, which makes every routine it owns a hole ` +
           'and would put them in the class this gate refuses (ADR 0052)',
       );
     }
   }
 
-  const functions = await db.execute<{
+  const registeredNames = registered.map(([name]) => name);
+  const routines = await db.execute<{
+    schema: string;
     name: string;
     args: string;
+    kind: string;
     owner: string;
     definer: boolean;
     volatility: string;
@@ -1471,8 +1495,10 @@ const main = async () => {
     result: string;
     acl: string[];
   }>(sql`
-    select p.proname as name,
-           pg_get_function_identity_arguments(p.oid) as args,
+    select n.nspname as schema,
+           p.proname as name,
+           coalesce(oidvectortypes(p.proargtypes), '') as args,
+           p.prokind as kind,
            pg_get_userbyid(p.proowner) as owner,
            p.prosecdef as definer,
            p.provolatile as volatility,
@@ -1489,60 +1515,68 @@ const main = async () => {
            ), '{}')::text[] as acl
     from pg_proc p
     join pg_namespace n on n.oid = p.pronamespace
-    where n.nspname = 'public'
-      and p.prokind = 'f'
+    where pg_get_userbyid(p.proowner) = ${AUTH_ROLE}
+       or (n.nspname = 'public' and p.proname = any(${sql.raw(
+         registeredNames.length > 0
+           ? `array[${registeredNames.map((n) => `'${n}'`).join(', ')}]::name[]`
+           : `array[]::name[]`,
+       )}))
   `);
 
-  // Filtered here rather than in SQL: the interesting set is "registered, or owned by the identity
-  // role", and expressing that as a bound array parameter fought the driver's array typing for no
-  // benefit. `public` holds few functions and the registry is small.
-  const relevant = functions.rows.filter(
-    (f) => f.owner === AUTH_ROLE || registered.some(([name]) => name === f.name),
-  );
+  const signature = (r: { schema: string; name: string; args: string }) =>
+    `${r.schema}.${r.name}(${r.args})`;
+  const matched = new Set<string>();
 
   for (const [name, spec] of registered) {
-    const found = relevant.find((f) => f.name === name);
-    if (!found) {
-      // Absent is fine only while no migration has created it. Present-and-wrong is the failure.
+    const wanted = `public.${name}(${spec.args.join(', ')})`;
+    const candidates = routines.rows.filter((r) => signature(r) === wanted && r.kind === 'f');
+    if (candidates.length === 0) {
       if (inDatabase.size > 0) {
+        const sameName = routines.rows.filter((r) => r.name === name).map(signature);
         identityFailures.push(
-          `${name} is registered in AUTH_FUNCTIONS and does not exist in public. Either the ` +
-            'migration that should create it is missing, or the registry entry is stale',
+          `no function ${wanted} exists. AUTH_FUNCTIONS registers it by schema, name and argument ` +
+            'types, so a different signature is a different function' +
+            (sameName.length > 0 ? `. Found instead: ${sameName.join(', ')}` : ''),
         );
       }
       continue;
     }
+    if (candidates.length > 1) {
+      identityFailures.push(`${wanted} resolves to ${candidates.length} routines, which cannot be`);
+    }
+    const found = candidates[0]!;
+    matched.add(signature(found));
+
     if (found.owner !== AUTH_ROLE) {
       identityFailures.push(
-        `${name} is owned by ${found.owner} rather than ${AUTH_ROLE}. A definer routine owned by ` +
+        `${wanted} is owned by ${found.owner} rather than ${AUTH_ROLE}. A definer routine owned by ` +
           'the migration owner bypasses row-level security, which is the shape ADR 0052 refuses',
       );
     }
     if (!found.definer) {
       identityFailures.push(
-        `${name} is not SECURITY DEFINER, so it runs as the caller and cannot see the row it was ` +
+        `${wanted} is not SECURITY DEFINER, so it runs as the caller and cannot see the row it was ` +
           'asked for. It would also vanish from the definer subcheck, which only reads prosecdef',
       );
     }
     if (found.volatility !== 's') {
       identityFailures.push(
-        `${name} is volatility '${found.volatility}' rather than STABLE. A read-only lookup is ` +
+        `${wanted} is volatility '${found.volatility}' rather than STABLE. A read-only lookup is ` +
           'stable; anything else either forbids planner reuse or claims an immutability it lacks',
       );
     }
-    const searchPath = (found.config ?? []).find((c) => c.startsWith('search_path='));
-    if (searchPath === undefined) {
+    // Compared exactly, not merely for presence. Review set `search_path = pg_catalog, pg_temp` and
+    // the check passed while the registry documents an empty path, so the subcheck was claiming a
+    // comparison it was not making.
+    const path = (found.config ?? []).find((entry) => entry.startsWith('search_path='));
+    if (path !== 'search_path=""') {
       identityFailures.push(
-        `${name} sets no search_path, so an unqualified name inside resolves through the caller's`,
+        `${wanted} has ${path ?? 'no search_path set'} where an empty search_path is required. ` +
+          'Every name inside is schema-qualified on that assumption, and a non-empty path is a ' +
+          'different resolution order than the one that was reviewed',
       );
     }
-    // The declared result columns are part of the decision (ADR 0054): a function returning a whole
-    // row rebuilds the leak inside itself, where nothing outside can see it.
-    // Parsed rather than pattern-matched. `pg_get_function_result` returns
-    // `TABLE(id uuid, phone text)`, and a substring test for `id` matches inside `uuid`, so the
-    // check would pass on a function that returns no id at all. The first version of this used a
-    // word-boundary regex in a template literal, where `\b` is a backspace character rather than a
-    // word boundary, and it failed against correct functions.
+
     const returned = found.result
       .replace(/^TABLE\(/i, '')
       .replace(/\)$/, '')
@@ -1552,28 +1586,32 @@ const main = async () => {
     const declared = [...spec.returns].sort().join(', ');
     if (returned.sort().join(', ') !== declared) {
       identityFailures.push(
-        `${name} returns [${returned.join(', ')}] where AUTH_FUNCTIONS declares [${declared}]. ` +
+        `${wanted} returns [${returned.join(', ')}] where AUTH_FUNCTIONS declares [${declared}]. ` +
           'Widening or narrowing a lookup is a change to the registry first, because a function ' +
           'returning more than it declares rebuilds the leak inside itself where no gate can see it',
       );
     }
-    const allowed = new Set([`${APP_ROLE}:EXECUTE`]);
-    for (const entry of found.acl) {
-      if (!allowed.has(entry)) {
-        identityFailures.push(
-          `${name} has ACL entry ${entry}. EXECUTE defaults to PUBLIC on a new function, so the ` +
-            `migration revokes it and grants ${APP_ROLE} alone, with no grant option`,
-        );
-      }
+
+    // Set equality, both directions. The earlier version rejected unexpected entries and never
+    // required the expected one, so revoking EXECUTE from the application left the gate green while
+    // the integration suite failed with `permission denied for function`.
+    const acl = [...found.acl].sort().join(', ');
+    const wantedAcl = `${APP_ROLE}:EXECUTE`;
+    if (acl !== wantedAcl) {
+      identityFailures.push(
+        `${wanted} grants [${acl || 'nothing'}] where exactly [${wantedAcl}] is required. EXECUTE ` +
+          'defaults to PUBLIC on a new function, so the migration revokes it and grants the ' +
+          'application alone, with no grant option',
+      );
     }
   }
 
-  for (const found of relevant) {
-    if (found.owner === AUTH_ROLE && !registered.some(([name]) => name === found.name)) {
+  for (const routine of routines.rows) {
+    if (routine.owner === AUTH_ROLE && !matched.has(signature(routine))) {
       identityFailures.push(
-        `${found.name}(${found.args}) is owned by ${AUTH_ROLE} and is not in AUTH_FUNCTIONS. The ` +
-          'role exists to own exactly the lookups the registry names, so an unregistered one is a ' +
-          'read path nobody declared',
+        `${signature(routine)} is owned by ${AUTH_ROLE} and is not a registered lookup. The role ` +
+          'exists to own exactly the surface AUTH_FUNCTIONS names, so an overload, a procedure, or ' +
+          'a function in another schema is a read path nobody declared',
       );
     }
   }
@@ -1581,11 +1619,14 @@ const main = async () => {
   subchecks.push({
     name: 'identity functions',
     failures: identityFailures,
-    status: relevant.length > 0 ? 'real' : 'waiting',
+    // Real once a migrated schema exists, because that is when the registry's functions are meant
+    // to. Keying this off how many routines were *found* let a database with every function missing
+    // report `waiting` while accumulating failures.
+    status: inDatabase.size > 0 ? 'real' : 'waiting',
     verdict:
-      relevant.length > 0
-        ? `${relevant.length} function(s) match AUTH_FUNCTIONS on owner, definer, volatility, search_path, result columns and ACL`
-        : 'no identity function exists yet, so there was nothing to compare against the registry',
+      inDatabase.size > 0
+        ? `${matched.size} of ${registered.length} registered function(s) matched on schema, name, argument types, owner, definer, volatility, search_path, result columns and exact ACL`
+        : 'no migrated schema yet, so the registry had nothing to compare against',
   });
 
   // ---- 10. does isolation actually hold? Behavioural, on a fixture table. --------------------
