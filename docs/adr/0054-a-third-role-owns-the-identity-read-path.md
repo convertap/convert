@@ -78,6 +78,15 @@ create policy auth_reader on "user" for select to convert_auth
 `convert_auth` sees every account because the functions it owns are the only things that run as it,
 and each of those functions constrains its own result. `convert_app` sees one row, its own.
 
+**Why two policies do not widen what `convert_app` sees.** The obvious objection is the one
+`schema.ts` already states: permissive policies combine with `OR`, so a second one can only widen
+visibility. That is true of two policies that both apply to the same role. These do not. A policy
+declared `TO convert_auth` is not applicable when `convert_app` is the current role, so it never
+enters the `OR` at all. The rule that keeps its force is therefore **one permissive policy per
+table and role**, and a second policy applicable to the *same* role must still fail the build. A
+gate that counted policies per table would reject this design; a gate that counts them per role
+keeps the protection the original rule was written for.
+
 **This extends ADR 0050 rather than contradicting it.** That record requires one canonical policy per
 table, with the expected expression derived from the server rather than hardcoded. The rule was
 written when every policy was tenant-scoped and every table had exactly one reader. It now has to
