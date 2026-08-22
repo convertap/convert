@@ -98,13 +98,34 @@ the owner's attributes changed:
 | bypassing owner, as this record requires | 1 row | **2 rows, every tenant** |
 
 `proacl` defaults to `EXECUTE` for `PUBLIC`, so no `GRANT` appears in the migration for a reviewer to
-notice, and the application needs no privilege it does not already hold. G7 therefore fails any
-`SECURITY DEFINER` routine in `public` owned by a bypassing role and executable by the application,
-and any that omits `SET search_path`. This is a real cost of the decision rather than a footnote:
-the capability the owner gains is inherited by anything the owner creates.
+notice, and the application needs no privilege it does not already hold. G7 therefore fails **any**
+`SECURITY DEFINER` routine in `public` owned by a bypassing role, without asking who may execute it:
+conditioning on that was the narrow version of the question, and review beat it with an inner definer
+owned by the owner with `EXECUTE` revoked, called by an outer definer owned by an ordinary role whose
+`EXECUTE` defaulted to `PUBLIC`. Since this record makes the owner the only bypassing role, such a
+routine has no legitimate use. G7 also fails one whose `search_path` is absent or leaves `pg_temp`
+ahead of `public` — `SET search_path = public` is the spelling people reach for, and review shadowed
+a table through it — and `bootstrap.sql` now revokes `TEMPORARY` from `PUBLIC` so the capability is
+gone rather than merely checked. This is a real cost of the decision rather than a footnote: the
+capability the owner gains is inherited by anything the owner creates.
 
-If Railway's role turns out **not** to be a superuser, this assertion fails the first time the gate
-runs against that database, which is the intended outcome: the fix is to grant `BYPASSRLS`
+**Measured on Railway, 22 August 2026.** The `test` environment's `DATABASE_URL` role is
+`postgres` with `rolsuper = true` and `rolbypassrls = true`, read over `railway ssh` into the Postgres
+service, since the host is on private networking and unreachable from a developer machine or from CI.
+So this record's requirement already holds there, and `FORCE ROW LEVEL SECURITY` is decoration for
+that role exactly as stated above — the question this record was written to close is closed with a
+measurement rather than an assumption.
+
+Three other things were true of that database at the same moment, and one of them is a problem:
+`public` held no relations, `pg_default_acl` was clean, no `SECURITY DEFINER` routines existed — and
+**`convert_app` did not exist at all.** ADR 0042's outstanding human step is still outstanding, so
+`DATABASE_URL_APP` has nothing to point at, the api would refuse to boot against that database, and
+G7 cannot run there. Railway also runs **PostgreSQL 18.6** where CI proves things on 16; the gate was
+re-run against a local 18 to check, passes there, and prints the canonical policy expression
+byte-identically, which is the payoff for deriving that string at runtime instead of pinning it.
+
+If some future environment's role turns out **not** to be able to bypass, this assertion fails the
+first time the gate runs against it, which is the intended outcome: the fix is to grant `BYPASSRLS`
 deliberately and record it, not to weaken the check.
 
 **Rejected alternatives:**
@@ -148,9 +169,16 @@ invisible.
 
 **The owner assertion is exercised by a dedicated CI step**, `G7 owner must not be able to be
 restricted`, which points `DATABASE_URL` at a deliberately non-bypassing role and requires the gate
-to exit non-zero. Without it the assertion could never fail where it runs: CI connects as `postgres`,
-a superuser, so the check was satisfied by construction — which is the ADR 0048 defect class, and it
-was pointed out one commit after this record claimed the assertion was real.
+to **exit 3 and name the owner's attributes**. Without such a step the assertion could never fail
+where it runs: CI connects as `postgres`, a superuser, so it was satisfied by construction — the ADR
+0048 defect class, pointed out one commit after this record claimed the assertion was real.
+
+The step's first version asserted only a non-zero exit, which review showed proved nothing: it went
+green on a wrong password, and green even with this record's assertion deleted, because the isolation
+probe cannot insert its own fixture rows under a non-bypassing owner either. `assert:rls` therefore
+exits **3** for a role precondition failure specifically, and the step asserts that code and the
+sentence. A gate that cannot fail is the thing this project keeps rediscovering, and a *test* of that
+gate which cannot fail is the same defect wearing a different hat.
 
 `docs/deployment-runbook.md` carries the operational half: which Railway variable holds which role,
 and that the owner credential is the one with unrestricted read.

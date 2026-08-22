@@ -52,7 +52,8 @@ type TableAccess =
       kind: 'role-grants';
       appPrivileges: readonly TablePrivilege[];
       reason: string;
-    };
+    }
+  | { kind: 'view'; appPrivileges: readonly TablePrivilege[] };
 ```
 
 A map rather than a set of lists, because membership in exactly one class stops being a property to
@@ -75,8 +76,11 @@ reviewer reading "no RLS, narrow grant instead" and believing rows were narrowed
 Any class carrying no policy of its own — `role-grants` or `view` — fails if it has a transitive
 foreign-key path to a row-scoped table, on the identity axis as well as the tenancy one. A NOT NULL
 `uuid` foreign key to `workspace(id)` forces `workspace-rls` on the table holding it, whatever that
-column is called. And a NOT NULL `uuid` column *named* `workspace_id` forces it too, regardless of
-what the graph says.
+column is called. And a column *named* `workspace_id` forces it too, regardless of what the graph
+says and **regardless of its type or nullability** — those are reported as further problems with the
+same table, never as conditions for noticing it. Requiring NOT NULL `uuid` before looking is how the
+second escape below survived a round: the check was restored and then silenced itself on the shape it
+was restored for.
 
 Both halves exist because each was defeated alone. The first draft checked only the column name, and
 review beat it with a child table carrying a `lead_id` and no tenant column, which classified itself
@@ -239,10 +243,16 @@ replaces is a table the application can read every row of, which produces no err
 ## Enforcement
 
 `packages/infra/scripts/assert-rls.ts` (G7, `assert:rls`) reads the registry and reports **ten**
-subchecks separately, each tagged real or vacuous, because they become real at different moments and
-one verdict would let the vacuous ones pass for proven (ADR 0048). **Three are real with no
-migrations. Seven are vacuous and say so**, and the script prints the count so a change in the split
-is visible rather than needing to be noticed.
+subchecks separately, each tagged **real**, **waiting** or **conditional**, because they become real
+at different moments and one verdict would let the others pass for proven (ADR 0048). The script
+prints the three counts, so a change in the split is visible rather than needing to be noticed.
+
+Today: **three real, five waiting, two conditional.** The distinction between the last two matters
+and calling both "vacuous" was itself an overstatement, one level up from the one this record is
+about — a *waiting* check becomes real with the first migration, a *conditional* one may never fire
+at all. `table ownership` is conditional because `bootstrap.sql` denies `convert_app` both `CREATE`
+and ownership, so no migration can give it anything to iterate; `definer routines` is conditional
+because nothing forces such a routine to exist.
 
 Real today:
 
@@ -253,17 +263,22 @@ Real today:
    TypeScript's `string` admits the empty string; a `scopeColumn` that is not a bare identifier
    fails, because it reaches `create policy` as text. One table is checked by this today,
    `workspace`.
-2. **Application role attributes.** `convert_app` is neither superuser nor `BYPASSRLS`, and
-   `pg_default_acl` grants nothing on future tables to it or to `PUBLIC`.
+2. **Database roles.** The app connection is actually `convert_app`; it is neither superuser nor
+   `BYPASSRLS`; it can reach *no* role that bypasses, by any chain of `pg_auth_members`, since a
+   member may `SET ROLE` to anything it reaches whatever `INHERIT` says; the migration owner *can*
+   bypass, as ADR 0052 requires; the two roles are distinct; and `pg_default_acl` grants nothing on
+   future tables to either the application or `PUBLIC`. A failure here exits **3** rather than 1, so
+   a CI step can assert this cause specifically rather than any non-zero exit.
 3. **Cross-tenant isolation**, behaviourally, on a fixture table the script creates and drops: a
    cross-tenant read returns nothing, an empty context returns nothing, and the owner sees both rows
    so the empty results mean something.
 
 Vacuous until there is a schema, and each says which:
 
-4. **Table ownership.** No table is owned by `convert_app`, so the FORCE requirement has nothing to
-   iterate. ADR 0042's amended Enforcement section first called this real today. It is not, and that
-   record now says so.
+4. **Table ownership** — *conditional, not waiting.* No table is owned by `convert_app`, and none
+   can be: `bootstrap.sql` denies it `CREATE` on the schema and ownership of anything. So the FORCE
+   requirement here has never had something to iterate and no migration will change that. ADR 0042's
+   amended Enforcement section first called this real today; it is not, and that record now says so.
 5. **Registry to catalogue**, both directions, including the direction ADR 0042 admitted it never
    checked. Relkind and class must agree *both* ways: a view or materialized view must be classified
    `view`, and a table must not be - the converse went unchecked at first, which made `view` an
@@ -286,11 +301,17 @@ Vacuous until there is a schema, and each says which:
    column grants and privileges inherited through a group role are visible. Exact match to
    `appPrivileges` for a table, subset for a partition, no `PUBLIC` grant, and none of `TRUNCATE`,
    `REFERENCES` or `TRIGGER` on any class.
-10. **Definer routines.** A `SECURITY DEFINER` function in `public` owned by a role that can bypass
-    row-level security, and executable by the application, fails - and `EXECUTE` defaults to `PUBLIC`,
-    so there is no `GRANT` in the migration for a reviewer to notice. One without `SET search_path`
-    fails too. This check exists because ADR 0052 made the owner a bypassing role, which converted
-    every such function into a bypass; see that record for the measurement.
+10. **Definer routines** — *conditional.* A `SECURITY DEFINER` routine in `public` owned by a role
+    that can bypass row-level security fails, **without asking who may execute it**. Conditioning on
+    that was the narrow version of the question and review beat it in two hops: an inner definer
+    owned by the bypassing owner with `EXECUTE` revoked, called by an outer definer owned by an
+    ordinary role whose `EXECUTE` defaults to `PUBLIC`. Each satisfied one clause; the pair leaked.
+    The migration owner is by design the only bypassing role, so such a routine has no legitimate
+    use and reachability need not be computed. A routine whose `search_path` is absent, or which
+    leaves `pg_temp` ahead of `public`, fails too — `SET search_path = public` is what people write
+    and review shadowed a table through it with a temp table of the same name. `bootstrap.sql` now
+    also revokes `TEMPORARY` from `PUBLIC`, which removes the precondition rather than checking for
+    its misuse. This check exists because ADR 0052 made the owner a bypassing role; see that record.
 
 **Both of this record's stated gaps were closed on 22 August 2026, the day after it landed**, and
 neither is open any more:
@@ -305,8 +326,10 @@ neither is open any more:
   live. **ADR 0052** decides it: the owner must be able to bypass row-level security, because a
   migration operates on every tenant's rows by definition and an ordinary owner turns a backfill into
   `UPDATE 0` that reports success. G7 asserts it on the `DATABASE_URL` connection, asserts the two
-  roles are distinct, and asserts `convert_app` is not a member of the owner — that last one being
-  the case that would otherwise pass every other check.
+  roles are distinct, and asserts `convert_app` can reach no role that bypasses at all, by any chain
+  of membership — that last one being the case that would otherwise pass every other check. It is
+  reachability rather than membership in the owner specifically: a bypassing role that is *not* the
+  owner is enough, and `SET ROLE` rather than inheritance is the mechanism.
 
 Reporting both as open rather than implying they were covered is what made them cheap to close: they
 were already written down as absences, in the words this record's own rule requires.

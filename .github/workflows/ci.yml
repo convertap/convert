@@ -298,17 +298,44 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: |
+          set -o pipefail
+          # drop owned by first: a leftover role holding schema privileges cannot be dropped, and
+          # the first version of this step opened with a bare `drop role if exists` that failed on
+          # a reused database with no way to recover.
           psql -h localhost -U postgres -d convert_test -v ON_ERROR_STOP=1 -c \
-            "drop role if exists ci_restricted_owner;
+            "do \$\$ begin
+               if exists (select 1 from pg_roles where rolname = 'ci_restricted_owner') then
+                 execute 'drop owned by ci_restricted_owner';
+                 execute 'drop role ci_restricted_owner';
+               end if;
+             end \$\$;
              create role ci_restricted_owner login password 'ci-throwaway' nosuperuser nobypassrls;
              grant all on schema public to ci_restricted_owner;"
-          if DATABASE_URL=postgres://ci_restricted_owner:ci-throwaway@localhost:5432/convert_test \
-             DATABASE_URL_APP=postgres://convert_app:ci-throwaway@localhost:5432/convert_test \
-             pnpm --filter @convert/infra assert:rls; then
-            echo "::error::assert:rls accepted a migration owner that cannot bypass RLS. ADR 0052 requires it to fail."
+
+          # Assert the CAUSE, not the exit status. Requiring merely "non-zero" made this step pass
+          # on any crash - a wrong password, a TypeScript error - and, worse, it passed even with
+          # the ADR 0052 assertion deleted, because the isolation probe cannot insert its own
+          # fixture rows under a non-bypassing owner either. assert:rls exits 3 for a role
+          # precondition failure specifically, so that is what gets checked.
+          set +e
+          DATABASE_URL=postgres://ci_restricted_owner:ci-throwaway@localhost:5432/convert_test \
+          DATABASE_URL_APP=postgres://convert_app:ci-throwaway@localhost:5432/convert_test \
+            pnpm --filter @convert/infra assert:rls > restricted.log 2>&1
+          code=$?
+          set -e
+          cat restricted.log
+
+          if [ "$code" -ne 3 ]; then
+            echo "::error::expected assert:rls to exit 3 for a role precondition failure, got $code. Exit 0 means it accepted an owner that cannot bypass RLS; any other code means it failed for an unrelated reason and this step proved nothing."
             exit 1
           fi
-          echo "assert:rls rejected the restricted owner, as ADR 0052 requires"
+          if ! grep -q "can neither bypass RLS nor is a superuser" restricted.log; then
+            echo "::error::assert:rls exited 3 without naming the owner's attributes. ADR 0052 requires that specific failure."
+            exit 1
+          fi
+          echo "assert:rls rejected the restricted owner by name and with exit 3, as ADR 0052 requires"
+
+          rm -f restricted.log
           psql -h localhost -U postgres -d convert_test -v ON_ERROR_STOP=1 -c \
             "drop owned by ci_restricted_owner; drop role ci_restricted_owner;"
 
