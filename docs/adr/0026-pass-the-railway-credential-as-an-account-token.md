@@ -55,6 +55,6 @@ The comment block above the deploy jobs was wrong in the same way, and worse tha
 
 ## Enforcement
 
-The deploy job proves itself: its last step curls `/health` on the api and `/` on the web service and fails on anything but a 200, so a deploy that authenticates but does not serve is still a red job.
+The deploy matrix proves each service: its last step curls `/ready` on the api or `/` on the web service and fails on anything but a 200, so a deploy that authenticates but does not serve is still a red job.
 
-No gate checks that the credential is passed under the right variable name, and none reasonably can from inside the repository — the token's kind is a fact about Railway, not about this file. What catches a regression is that `deploy-test` runs on every push to `develop` and fails loudly, which is now true and was not before.
+No gate checks that the credential is passed under the right variable name, and none reasonably can from inside the repository — the token's kind is a fact about Railway, not about this file. What catches a regression is that `deploy-test` runs on pushes to `testing` while `DEPLOY_TEST=true` and fails loudly. ADR 0049's promotion check then prevents that commit advancing to `staging`.

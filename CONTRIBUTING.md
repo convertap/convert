@@ -105,12 +105,22 @@ Deployment variables, pre-deploy migrations, verification and rollback are docum
 
 ## The loop
 
-1. Branch from `main`: `feat/short-description`, `fix/…`, `refactor/…`. **`main` is protected, nobody pushes to it directly, including administrators.**
+1. Branch from `develop`: `feat/short-description`, `fix/…`, `refactor/…`. **All four long-lived branches are protected; nobody pushes to them directly, including administrators.**
 2. Write the test where the logic lives, domain rules in `core` without a database, wiring in integration tests.
 3. Commit. The `commit-msg` hook enforces Conventional Commits and rejects agent co-authorship trailers.
 4. Push. The `pre-push` hook runs the boundary, invariant, and contrast checks.
 5. Open a pull request and sign the checklist in the template yourself.
-6. All four CI jobs green, branch up to date with `main`, conversations resolved. Squash merge; the branch deletes itself.
+6. All four CI jobs green, branch up to date with `develop`, conversations resolved. Squash merge
+   feature work; the feature branch deletes itself.
+
+Releases move only through promotion pull requests: `develop` -> `testing` -> `staging` -> `main`.
+Merging to `develop` runs CI without deploying. Merging to `testing` deploys Railway `test`; merging
+to `staging` deploys Railway `staging`; merging to `main` records the production release. There is
+no production deploy job until a production Railway environment and its approval policy exist.
+Promotion pull requests use **Create a merge commit**, never squash or rebase, so the promoted
+branch remains an ancestor of the next release. A promotion to `staging` cannot merge until both
+Railway `test` deployment checks succeeded on the `testing` commit; promotion to `main` likewise
+requires both Railway `staging` checks on the `staging` commit.
 
 Approvals are currently set to zero because a solo maintainer cannot approve their own pull request. That rises to one the day a second developer joins, everything else in the protection rules applies from today.
 

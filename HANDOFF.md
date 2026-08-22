@@ -36,26 +36,28 @@ product, not one for a stakeholder.
 
 ---
 
-## 2. Deployment: the test path is proven, staging is not
+## 2. Deployment: the old test route is proven; the promotion route is not
 
 Two Railway environments in `talented-trust`, both in `ams` (Amsterdam), each with its own
 Postgres. Everything is in one region because every render is web → api → db.
 
 | | test | staging |
 |---|------|---------|
-| Branch | `develop` | `main` |
+| Branch | `testing` | `staging` |
 | api | https://convertapi-test.up.railway.app/docs | https://convertapi-production.up.railway.app/docs |
 | web | https://convertweb-test.up.railway.app | https://convertweb-production.up.railway.app |
 | Deploy switch | `DEPLOY_TEST=true` | `DEPLOY_STAGING=false` |
-| Proven? | **yes, 20 August** | **never run** |
+| Proven? | old `develop` route only, 20 August | **never run** |
 
 The staging URLs still say `production` because Railway generated them before the environment
 was renamed. Cosmetic, and worth knowing before someone reads too much into a hostname.
 
-**Railway's deployment triggers are deleted.** Nothing deploys on a push. Deploying is
+**Railway's deployment triggers are deleted.** The only deployment pushes are merges into
+`testing` and `staging`. Deploying is
 `deploy-test` and `deploy-staging` in `.github/workflows/ci.yml`, gated on
 `needs: [guardrails, quality, database, performance]` and bound to a GitHub environment so the
-branch policies bind (ADR 0024).
+branch policies bind (ADR 0024, amended by ADR 0049). The full promotion path is
+`develop` -> `testing` -> `staging` -> `main`; `develop` and `main` run gates without deploying.
 
 **`deploy-test` now works, and it took three fixes to get there.** The first was PR #24: the push
 trigger listed `main` only, so the job was unreachable. With that merged, `develop` was
@@ -158,8 +160,8 @@ decision record. ADR 0025.
 That it works is not a claim from a test matrix: **#2 and #3 passed G2 and merged on their own
 evidence.** #4 and #5 only need `gh pr update-branch` and will follow.
 
-`develop` is currently two commits behind `main` (#2 and #3). Fast-forwarding it re-runs
-`deploy-test`, which is now a cheap way to re-prove the deploy path after the action bumps.
+The old direct `develop` -> test deployment path is retired by ADR 0049. The remote `testing` and
+`staging` branches still need to be created and protected before the new promotion flow can run.
 
 ---
 
