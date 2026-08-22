@@ -11,13 +11,13 @@ Architecture is [`docs/architecture.md`](./docs/architecture.md); product scope 
 ## Prerequisites
 
 - Node.js 22 and Corepack-enabled pnpm 11
-- Docker with Compose for local PostgreSQL 16
+- Docker with Compose for local PostgreSQL 18 <!-- pg-version -->
 - Python 3.12 for repository guardrails
 - Infisical CLI only when using shared secrets or the Notion mirror
 
 ## Current state
 
-The workspace is scaffolded and the api boots. `apps/api`, `apps/web` and `apps/worker` exist alongside `packages/contracts`, `core`, `application` and `infra`, and fifteen guardrails run in CI.
+The workspace is scaffolded and the api boots. `apps/api`, `apps/web` and `apps/worker` exist alongside `packages/contracts`, `core`, `application` and `infra`, and sixteen guardrails run in CI.
 
 **There is no schema and there are no migrations.** `packages/infra/src/db/schema.ts` holds `workspace` and nothing else, and `TABLE_ACCESS` in `packages/infra/src/db/access.ts` classifies that one table and no others. That is deliberate, not unfinished: the product rules that decide the shape of contact, lead and deal are settled but not yet turned into tables, which is what the *Schema and migration plan* effort is for. Two consequences for you: `pnpm test:integration` has nothing to run, and the G9 performance budget is trivially met because `apps/web` is a placeholder.
 
@@ -89,12 +89,24 @@ $env:DATABASE_URL_APP='postgres://convert_app:convert-app-local@localhost:5432/c
 Then, in order:
 
 ```bash
-pnpm db:up                                    # Postgres 16 in Docker, from docker-compose.yml
+pnpm db:up                                    # Postgres 18 in Docker, from docker-compose.yml
 pnpm --filter @convert/infra bootstrap        # creates convert_app; idempotent, safe to rerun
 pnpm db:migrate                               # currently reports that there is nothing to apply
 pnpm db:assert-rls                            # proves RLS applies to the application role
 pnpm --filter @convert/infra assert:conventions
 ```
+
+**If you worked on this repository before 22 August 2026**, you have a Compose volume holding a
+Postgres 16 cluster. <!-- pg-version:historical=16 --> Postgres 18 will not start on it, because the data directory layout is
+version-specific, so `docker-compose.yml` now uses a separate `convert-pgdata-18` volume mounted at
+`/var/lib/postgresql`, which is where the 18 image declares its volume. The old one is left alone.
+
+Compose prefixes volume names with the project, so the old volume is usually
+`project_convert-pgdata` rather than `convert-pgdata`, so find yours with
+`docker volume ls --filter name=convert`. Nothing in this repository needs migrating out of it,
+because there is no schema yet, but only you know whether you put anything in it by hand. Inspect it
+before removing it, and delete by its real name.
+
 
 `bootstrap` is what creates the application role. Skip it and `assert:rls` fails saying the role does not exist, which is the intended message rather than a puzzle.
 

@@ -2,7 +2,7 @@
 # queue in Postgres rather than adding Redis).
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine # pg-version
     container_name: convert-postgres
     environment:
       POSTGRES_USER: convert
@@ -11,7 +11,9 @@ services:
     ports:
       - '5432:5432'
     volumes:
-      - convert-pgdata:/var/lib/postgresql/data
+      # Postgres 18 made PGDATA version-specific and declares its VOLUME here;
+      # mounting /var/lib/postgresql/data no longer persists the cluster on 18.
+      - convert-pgdata-18:/var/lib/postgresql
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U convert']
       interval: 10s
@@ -19,4 +21,6 @@ services:
       retries: 5
 
 volumes:
-  convert-pgdata:
+  # convert-pgdata is an orphaned Postgres 16 cluster, safe to delete. # pg-version:historical=16
+  # The rename keeps a checkout out of an incompatible-data-directory boot loop.
+  convert-pgdata-18:

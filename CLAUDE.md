@@ -8,7 +8,7 @@ Mobile-first sales & lead management platform for Ghanaian SMEs. The workspace a
 2. **`docs/product-spec.md`**. Full product vision + commercial model, derived from `Convert_Pitch_Deck.pptx`. Reference for intent, not for scope. §12 holds open questions, §13 the deck-vs-scope divergences.
 3. **`docs/pre-development-checklist.md`**. What must be obtained, decided, or proven before implementation starts. IDs (E0–E7, L1–L4, R1–R9, A1–A6, S1–S7, P1–P6) are stable; cite them. §10 is the decision log, record decisions there as they land.
 4. **`docs/architecture.md`**. Target architecture. §3 the decided stack, §6 invariants I1–I12, §20 the decisions it still assumes, §21 how the rules are kept.
-5. **`docs/adr/`**. 52 decision records. **Accepted:** 0001, 0015–0052. **Proposed:** 0002, 0003, 0005–0014. **Superseded:** 0004, by 0043; the branch-model portions of 0019 and 0024, by 0049; the table-classification inventory of 0042 and both `IDENTITY_TABLES` and the `verification_attempt` access mechanism of 0047, by 0050. 0051 decides views and materialized views, 0052 the migration owner's attributes; both are additive to 0050 rather than superseding it. Cite by number. Never edit an accepted **Decision**, supersede it — the header and the Enforcement section may be edited, and ADR 0048 requires the Enforcement section to say what exists today rather than what is intended.
+5. **`docs/adr/`**. 53 decision records. **Accepted:** 0001, 0015–0053. **Proposed:** 0002, 0003, 0005–0014. **Superseded:** 0004, by 0043; the branch-model portions of 0019 and 0024, by 0049; the table-classification inventory of 0042 and both `IDENTITY_TABLES` and the `verification_attempt` access mechanism of 0047, by 0050. 0051 decides views and materialized views, 0052 the migration owner's attributes; both are additive to 0050 rather than superseding it. 0053 moves CI and local development to Postgres 18 and re-runs every proof the earlier records made on 16, adding an Enforcement pointer to 0042, 0044, 0046, 0050, 0051 and 0052 without touching a Decision. Cite by number. Never edit an accepted **Decision**, supersede it — the header and the Enforcement section may be edited, and ADR 0048 requires the Enforcement section to say what exists today rather than what is intended.
 6. **`docs/engineering-guardrails.md`**. Layout, the dependency rule, CI gates G1–G14, conventions. With `docs/code-review-checklist.md`, `docs/definition-of-done.md`, `docs/test-strategy.md`.
 7. **`docs/error-handling.md`**. Errors are first class (ADR 0018): one catalogue carrying status, retryability, and the sentence a person reads. Layers below the API throw without logging.
 8. **`docs/design-system.md`**. Shadcn primitives, Convert token tiers, domain tokens for stage/channel/status/window, accessibility and performance rules (ADR 0016).
@@ -38,13 +38,13 @@ WhatsApp integration depth. Meta test credentials, Meta Cloud API direct, third-
 
 ## Stack
 
-Decided 2026-08-18 (S1, ADR 0001): **Next.js** web · **NestJS on the Fastify adapter** api · **NestJS standalone** worker · **PostgreSQL 16** with **Drizzle** (ADR 0017) · pnpm monorepo · Postgres-backed job queue (ADR 0010) · OpenAPI generated and committed from the first endpoint (S7, ADR 0015).
+Decided 2026-08-18 (S1, ADR 0001): **Next.js** web · **NestJS on the Fastify adapter** api · **NestJS standalone** worker · **PostgreSQL 18** with **Drizzle** (ADR 0017, version by ADR 0053) <!-- pg-version --> · pnpm monorepo · Postgres-backed job queue (ADR 0010) · OpenAPI generated and committed from the first endpoint (S7, ADR 0015).
 
 **Scaffolded.** pnpm workspace with Turborepo: `apps/api`, `apps/web`, `apps/worker`, and
 `packages/contracts`, `core`, `application`, `infra`. The API boots, serves Swagger, validates
 Zod boundary contracts, and exposes database-backed readiness. The twelve invariant specs are
-registered but remain `todo` until their schema features exist. Guardrails G1–G15 run in CI and
-four of them run before every push.
+registered but remain `todo` until their schema features exist. Guardrails G1–G16 run in CI and
+five of them run before every push.
 
 **What is deliberately not built.** `packages/infra/src/db/schema.ts` holds `workspace` and
 nothing else, and `TABLE_ACCESS` in `packages/infra/src/db/access.ts` classifies that one table.

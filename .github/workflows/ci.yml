@@ -136,6 +136,10 @@ jobs:
       - name: G15 Notion mirror is current
         run: python tools/check_notion_mirror.py
 
+      # Keep this job's display name unchanged: branch protection requires it exactly.
+      - name: G16 Postgres version is consistent
+        run: python tools/check_pg_version.py
+
       # G14 - secret scanning. The repository is public, so a leaked credential is
       # public the moment it lands. Runs on history, not just the diff, because a
       # rewritten branch can carry an older commit in.
@@ -222,7 +226,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18 # pg-version
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: convert_test

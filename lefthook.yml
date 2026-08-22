@@ -28,6 +28,8 @@ pre-push:
       run: python tools/check_invariant_coverage.py
     contrast:
       run: python tools/check_contrast.py
+    pg-version:
+      run: python tools/check_pg_version.py
     openapi:
       # G10's first half, locally. The generator boots the api's module graph, so it is the
       # only local check that proves the graph still constructs - `typecheck` and `test` both

@@ -1,6 +1,6 @@
 # Deployment runbook
 
-Last updated: 21 August 2026.
+Last updated: 22 August 2026.
 
 ## Required variables
 
@@ -80,6 +80,21 @@ has no database pre-deploy command.
 - A migration must be compatible with the currently running application because pre-deploy runs
   before Railway switches traffic to the new process.
 - Bootstrap is idempotent and runs before every migration batch.
+
+## The Postgres version
+
+Every environment runs the Postgres major named in `.postgres-version`, and gate G16 holds the six
+declarations inside this repository to it (ADR 0053). **G16 cannot see Railway.** The Postgres
+service's image tag is a seventh copy of that number, owned by Railway's template rather than by any
+file here, so it is checked by a person:
+
+```bash
+railway ssh --service Postgres --environment test -- psql -c 'select version()'
+```
+
+Do that as part of the weekly reconciliation, alongside the Notion checks. If the tag has moved to a
+new major, that is a decision, not a bump: it changes what every RLS and enum proof was measured
+against, so it needs a record of its own.
 
 ## Rollback
 

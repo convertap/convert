@@ -182,3 +182,5 @@ gate which cannot fail is the same defect wearing a different hat.
 
 `docs/deployment-runbook.md` carries the operational half: which Railway variable holds which role,
 and that the owner credential is the one with unrestricted read.
+
+**Re-proven on PostgreSQL 18 (ADR 0053).** The fail-injection here was run on PostgreSQL 16.13. On 18.6 a `nosuperuser nobypassrls` owner still makes `assert:rls` exit 3 and still names the role's attributes in the sentence this record quotes. ADR 0053 holds the current evidence.

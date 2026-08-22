@@ -4,7 +4,7 @@ Target architecture for the MVP defined in [`mvp-scope.md`](./mvp-scope.md), des
 
 Written stack-agnostic and still largely stack-independent: the layering, invariants, and messaging design hold regardless of runtime. The stack itself is now decided, §3, ADR 0001.
 
-**Last updated:** 2026-08-21
+**Last updated:** 2026-08-22
 
 **Status:** Proposal. Sections marked **[DECIDE]** carry a checklist ID and need product-owner sign-off before implementation.
 
@@ -47,7 +47,7 @@ TypeScript throughout, one pnpm monorepo, three runtimes, one datastore.
 | API | **NestJS on the Fastify adapter**. HTTP interface, webhook ingress, later the Pro-tier public API |
 | Worker | **NestJS standalone application context**, sharing modules with the API |
 | Domain | `packages/core` and `packages/application`, framework-free, shared by API and worker |
-| Datastore | **PostgreSQL 16** in CI and local development; **Postgres 18 on Railway**, in both deployed environments, confirmed 21 August 2026. Row-level security is the tenancy boundary either way, but the two-major gap means ADR 0042's policy expression and ADR 0044's enum ordering are proven on a version nothing runs. Closing the gap is a live decision |
+| Datastore | **PostgreSQL 18** in CI, local development and both deployed Railway environments (ADR 0053). <!-- pg-version --> The major is the decision and the minor is only evidence, so CI tracks `postgres:18` rather than a pinned minor. Railway serves `ghcr.io/railwayapp-templates/postgres-ssl:18`, the same pgdg Debian build with TLS enabled. Row-level security is the tenancy boundary, and every proof of it now runs on the version that serves traffic |
 | Query layer | **Drizzle ORM** + Drizzle Kit migrations, in `packages/infra` only (ADR 0017) |
 | Jobs | Postgres-backed queue (ADR 0010), no second stateful service |
 | API docs | OpenAPI generated from code and committed (ADR 0015) |
@@ -296,7 +296,7 @@ Three layers, each catching what the one above misses.
 
 **1. Database: Postgres row-level security.** Every tenant table gets an RLS policy on `workspace_id`, and the application connects as a non-superuser role that cannot bypass it. The session sets the current workspace per transaction. This turns a forgotten `WHERE workspace_id = …` from a data breach into an empty result set. It is the single most valuable decision in this document and costs about a day.
 
-**The policy expression is not free-form** (ADR 0042, proven against Postgres 16 on 21 August 2026). Every tenant table's policy reads:
+**The policy expression is not free-form** (ADR 0042, re-proven on PostgreSQL 18.6 on 22 August 2026, recorded in ADR 0053). Every tenant table's policy reads:
 
 ```sql
 alter table <t> enable row level security;

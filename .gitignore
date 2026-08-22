@@ -58,3 +58,6 @@ npm-debug.log*
 
 # Delegate scratch artifacts (deck renders — regenerable from the .pptx)
 .codex-review/
+
+# Delegate and verification reports. Evidence that matters goes into an ADR, not here.
+.reports/
