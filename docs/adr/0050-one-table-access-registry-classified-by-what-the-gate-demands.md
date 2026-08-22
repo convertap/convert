@@ -371,3 +371,5 @@ imagine. Independent review found all four, and two reviewers given different in
 different ones.
 
 **Re-proven on PostgreSQL 18 (ADR 0053).** The measurements here are recorded against Postgres 16.13, two majors behind what serves traffic. Re-run on 18.6: a plain view over a policed table still returns every tenant's rows where the table returns one, and the gate still catches it. ADR 0053 holds the current evidence and decides that a record's measured minor is never rewritten.
+
+**Extended by ADR 0054 on the canonical-policy rule.** This record requires one canonical policy per table. The identity read path needs a policy per table *and role*: `user` carries a self-scoped policy for `convert_app` and a permissive one for `convert_auth`, because a `SECURITY DEFINER` function runs as its owner and that owner is deliberately non-bypassing, so a single self-scoped policy would blind the sign-in lookup too. The rule is not wrong, it was written when every policy was tenant-scoped. ADR 0054 carries the detail and the assertion work it implies.
