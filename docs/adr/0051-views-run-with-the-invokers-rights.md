@@ -128,3 +128,5 @@ is **vacuous today because the schema holds no views and no migrations exist**:
 the option check, and the same view with `security_invoker = true` passes and returns one tenant's row
 where the plain one returned both. A materialized view over the same table fails the dependency check.
 The table in the Context section is that measurement.
+
+**Re-proven on PostgreSQL 18 (ADR 0053).** The four-row table above was measured on PostgreSQL 16.13. On 18.6 the numbers are identical — table 1, plain view 2, `security_invoker` view 1, materialized view 2 — so both halves of this decision still hold. ADR 0053 holds the current evidence.

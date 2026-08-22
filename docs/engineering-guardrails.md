@@ -95,6 +95,7 @@ Two kinds. A machine gate blocks the merge; a human gate is a checklist line som
 | G13 | Design token contrast meets WCAG in the shipped theme | machine | merge |
 | G14 | No secret in the staged diff or in git history | machine | merge |
 | G15 | Every Notion page derived from these documents is current, or the drift is acknowledged | machine | merge |
+| G16 | Every declaration of the Postgres major agrees with `.postgres-version` | machine | merge |
 
 G6 and G7 are the two most easily skipped and the two that matter most. G6 turns the architecture into tests that fail when someone contradicts it. G7 is the difference between multi-tenancy and a data breach with a plausible-looking query.
 
@@ -103,6 +104,10 @@ G7 reports ten subchecks separately rather than one verdict, because they become
 **Every view sets `security_invoker = true`** (ADR 0051). Without it a view reads its base tables as its owner, and migrations run as the owner, so it bypasses every policy on them — measured, not theorised: a plain view over a policed table returned every tenant's rows where the table returned one. The option is required on every view, whatever it selects from, because a view's base tables change and a rule with a condition in it is one people get wrong. **A materialized view may not read a row-scoped table**, checked through the dependency graph, because row-level security is never applied when reading one and no option changes that; the replacement is a real table maintained by the worker with its own policy.
 
 **Migrations are not tenant-scoped, deliberately** (ADR 0052). The `DATABASE_URL` role must be able to bypass row-level security, and G7 asserts it: a migration operates on every tenant's rows by definition, and an ordinary owner against a `FORCE`d table turns a backfill into `UPDATE 0` that reports success — the worst outcome under forward-only migrations. G7 also asserts the two roles are distinct, that the app connection really is `convert_app`, and that `convert_app` can reach **no** role that bypasses. The mechanism there is `SET ROLE`, not inheritance — role attributes are never inherited through membership, but a member can `SET ROLE` to anything it reaches and take the attribute on, so `grant some_bypassing_role to convert_app` is a full escape. And because the owner is now a bypassing role, a `SECURITY DEFINER` function it owns is one too, with `EXECUTE` defaulting to `PUBLIC`; G7 fails any such routine the application can execute, and any without `SET search_path`. The tenancy boundary is therefore a property of the application's connection, not of the database as a whole.
+
+**One file names the Postgres major** (ADR 0053). `.postgres-version` holds the declared major and nothing else; G16, `tools/check_pg_version.py`, fails when any of the six files that declare it disagrees, and fails on a line naming a different major unless that line carries `pg-version:historical=<major>`. The hatch names what it excuses on purpose: a bare hatch silenced the whole line, so a line mixing a historical mention with a current one hid a wrong current declaration. `docs/adr/` is outside the sweep on purpose — a record's evidence names the version it was measured on, and a gate that dragged that toward the current major would be rewriting the archive to make itself green. This gate exists because the repository ran CI on 16 while deploying to 18 for three days without anything noticing, and the number was written in six places kept in sync by hand. **What it cannot see is Railway**, whose image tag is the seventh copy; that one is a line on the weekly reconciliation in `docs/deployment-runbook.md`.
+
+**G16 runs inside the existing `guardrails` job and that job's display name is unchanged**, which is why the name reads `G1-G2 ... G14-G15` while the job runs six gates. Branch protection matches the four jobs by exact display name, so a rename turns a required check into a missing one. Fix the name only in the same change that updates branch protection.
 
 CI jobs are written so they pass on an empty repository and tighten automatically as the corresponding code lands. A pipeline that is red from day one gets ignored, then disabled.
 
@@ -243,7 +248,7 @@ maintainer; GitHub enforces this for administrators too. Their roles are fixed:
 
 | Setting | Value | Reason |
 |---------|-------|--------|
-| Required checks | the four CI jobs, **by exact job name** | Gates G1–G15 are the merge criteria |
+| Required checks | the four CI jobs, **by exact job name** | Gates G1–G16 are the merge criteria. A gate added to an existing job needs no protection change; renaming the job does (ADR 0053) |
 | Strict (up to date) | on | A green check against a stale target branch proves nothing |
 | Administrators | enforced | A rule the owner can skip is a suggestion |
 | Required approvals | 0 | A solo maintainer cannot approve their own PR; promotion would deadlock. Raise to 1 the day a second developer joins |

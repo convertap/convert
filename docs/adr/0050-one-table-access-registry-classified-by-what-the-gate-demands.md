@@ -369,3 +369,5 @@ The lesson worth keeping is not any individual hole. It is that the gate was ver
 by the person who wrote it and still had four, because an author tests the failures they can
 imagine. Independent review found all four, and two reviewers given different instructions found
 different ones.
+
+**Re-proven on PostgreSQL 18 (ADR 0053).** The measurements here are recorded against Postgres 16.13, two majors behind what serves traffic. Re-run on 18.6: a plain view over a policed table still returns every tenant's rows where the table returns one, and the gate still catches it. ADR 0053 holds the current evidence and decides that a record's measured minor is never rewritten.

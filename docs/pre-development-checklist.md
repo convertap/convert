@@ -4,7 +4,7 @@ What must be settled before Phase 4 implementation starts. Two of these buckets 
 
 Scope authority remains [`mvp-scope.md`](./mvp-scope.md). This document does not change scope; it lists what has to be decided, obtained, or proven first.
 
-**Last updated:** 2026-08-21
+**Last updated:** 2026-08-22
 
 ## Status legend
 
@@ -151,7 +151,7 @@ R3 is not a permissions feature. It decides whether every query is owner-scoped 
 | S3 | Background jobs and scheduler | **Decided across two records.** Queue 2026-08-18 (ADR 0010): Postgres-backed, no second stateful service; BullMQ on Redis rejected. Scheduler 2026-08-19 (ADR 0022): the worker is a Railway **cron service on a five-minute schedule**, draining a bounded batch and exiting, because Railway skips a run while the previous one is still going. Sweeps stay idempotent per (task, due-window) and timezone-sensitive (I11) | ☑ |
 | S4 | Public webhook endpoint design | Signature-verified, idempotent, replay-safe. Providers retry; duplicates will arrive | ☐ |
 | S5 | Event instrumentation | Activation is "10+ contacts and 1+ deal within 7 days" (`mvp-scope.md` §26). Unmeasurable if analytics is bolted on afterward | ☐ |
-| S6 | Environments | **Decided 2026-08-19 (ADR 0022):** staging live on Railway in Amsterdam, api and web always-on beside a managed Postgres, one region, private network, config-as-code in `apps/*/railway.json`. **Postgres 18, confirmed 21 August 2026** by reading the service: both the `staging` and `test` environments run `ghcr.io/railwayapp-templates/postgres-ssl:18`. That is two major versions ahead of CI and local development, which run Postgres 16 — so ADR 0042's RLS policy expression and ADR 0044's enum ordering are proven on a version neither environment runs. Tracked as its own decision Worker deliberately not deployed until it has a handler and a drain-and-exit entrypoint. Point-in-time recovery available but off, and backups stay unproven until one is restored | ☑ |
+| S6 | Environments | **Decided 2026-08-19 (ADR 0022):** staging live on Railway in Amsterdam, api and web always-on beside a managed Postgres, one region, private network, config-as-code in `apps/*/railway.json`. **PostgreSQL 18 everywhere, decided 2026-08-22 (ADR 0053).** <!-- pg-version --> Both deployed environments run `ghcr.io/railwayapp-templates/postgres-ssl:18`, confirmed 21 August by reading the service. CI and local development ran two majors behind until this record, so every RLS and enum proof had been made on a version nothing served; the fix moved CI and Compose to `postgres:18`, re-ran the proofs there, and left G16 asserting that the six declarations still agree. Worker deliberately not deployed until it has a handler and a drain-and-exit entrypoint. Point-in-time recovery available but off, and backups stay unproven until one is restored | ☑ |
 
 ---
 
@@ -280,7 +280,7 @@ Fill in as decisions land. Record the decision, not the discussion.
 | 2026-08-21 | S7 | Zod schemas in `contracts` are the single source for OpenAPI; `nestjs-zod` derives the DTO class in `apps/api`; requests validated globally and field errors reach the envelope; cursor is the ULID; G10's completeness half built. ADR 0045 | Engineering |
 | 2026-08-18 | S2 | Mobile performance budget is five numbers in `architecture.md` §18, enforced as G9 through `lighthouserc.json`. ADR 0012. *Logged 21 August; the decision predates the row* | Engineering |
 | 2026-08-19 | S3 | Job queue is Postgres-backed (ADR 0010); the worker is a Railway cron service on a five-minute schedule that drains a bounded batch and exits (ADR 0022). Always-on worker and folding it into the api both rejected. *Logged 21 August* | Engineering |
-| 2026-08-19 | S6 | Staging on Railway in Amsterdam, one region with Postgres 18, config-as-code. Worker not deployed until it has a handler. ADR 0022. *Logged 21 August. The "Postgres 18" was queried and confirmed the same day — and it is two majors ahead of CI's 16* | Engineering |
+| 2026-08-19 | S6 | Staging on Railway in Amsterdam, one region with Postgres 18, config-as-code. Worker not deployed until it has a handler. ADR 0022. *Logged 21 August. The "Postgres 18" was queried and confirmed the same day — and was then two majors ahead of CI, which ADR 0053 closed on 22 August* <!-- pg-version:historical=16 --> | Engineering |
 | 2026-08-21 | A1 | Refresh tokens are stored: one revocable `session` row per family, identity-only, generation-numbered so replay revokes the family. Rate limits are a Postgres table, not memory. **Lifetime shortened from 30 days to 7**, at roughly 4.3× the verification spend ADR 0029 budgeted. ADR 0047 | Product owner |
 
 **New blocking items created by the 21 August session**, none of which existed before it:
