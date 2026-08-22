@@ -3,7 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-08-21
 **Supersedes:** 0042, in one part only — the table classification inventory; 0047, in two parts only — `IDENTITY_TABLES`, and the `verification_attempt` access mechanism
-**Superseded by:** -
+**Superseded by:** 0051, in one part only — the blanket refusal of views and materialized views, which is now a rule they can satisfy. Everything else here stands, and ADR 0052 additionally asserts the migration owner's attributes, which this record left as an open question
 
 ## Context
 
@@ -272,12 +272,24 @@ Vacuous until there is a schema, and each says which:
    `appPrivileges` for a table, subset for a partition, no `PUBLIC` grant, and none of `TRUNCATE`,
    `REFERENCES` or `TRIGGER` on any class.
 
-**What is deliberately not enforced.** Views and materialized views are refused rather than
-modelled, so the first one anybody needs will fail the build until a decision exists - that is the
-intended outcome, not a gap to route around. The migration owner's own attributes are not asserted:
-if that role is a superuser then `FORCE` is decoration for it, and if it is not, then a data-backfill
-migration against a row-scoped table silently affects zero rows. Which of the two is true on Railway
-cannot be determined from this repository, so it is recorded as an open question rather than assumed.
+**Both of this record's stated gaps were closed on 22 August 2026, the day after it landed**, and
+neither is open any more:
+
+- Views and materialized views were refused rather than modelled. **ADR 0051** admits them: every
+  view must set `security_invoker = true`, which makes it read its base tables as the invoking role
+  so their policies apply, and a materialized view may not reach a row-scoped table at all, checked
+  through the dependency graph. Measured on Postgres 16.13, a plain view over a policed table
+  returned every tenant's rows where the table returned one, and the same view with the option
+  returned one.
+- The migration owner's attributes were not asserted, leaving both readings of the tenancy guarantee
+  live. **ADR 0052** decides it: the owner must be able to bypass row-level security, because a
+  migration operates on every tenant's rows by definition and an ordinary owner turns a backfill into
+  `UPDATE 0` that reports success. G7 asserts it on the `DATABASE_URL` connection, asserts the two
+  roles are distinct, and asserts `convert_app` is not a member of the owner — that last one being
+  the case that would otherwise pass every other check.
+
+Reporting both as open rather than implying they were covered is what made them cheap to close: they
+were already written down as absences, in the words this record's own rule requires.
 
 **Verified by making it fail**, against Postgres 16.13 on 21 August 2026, twice - the second time
 because the first was not enough.

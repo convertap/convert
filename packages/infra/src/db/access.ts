@@ -89,6 +89,23 @@ export type TableAccess =
        * reviewer accepts instead of checking.
        */
       reason: string;
+    }
+  | {
+      /**
+       * A view or a materialized view (ADR 0051).
+       *
+       * A view carries no policy of its own; what makes it safe is `security_invoker = true`, which
+       * makes it read its base tables as the *invoking* role so their policies apply. Without the
+       * option a view reads them as its owner, and migrations run as the owner - measured on
+       * Postgres 16.13, a plain view over a policed table returned every tenant's rows while the
+       * table itself returned one.
+       *
+       * A materialized view cannot be made safe at all, because row-level security is never applied
+       * when reading one. So a materialized view may not reach a row-scoped table, and G7 walks the
+       * dependency graph rather than trusting the definition to look harmless.
+       */
+      kind: 'view';
+      appPrivileges: readonly TablePrivilege[];
     };
 
 /**
@@ -173,12 +190,19 @@ export const TABLE_ACCESS_BLOCKERS = {
 /**
  * Relation kinds `TABLE_ACCESS` can describe. Anything else in `public` fails the build.
  *
- * `r` is an ordinary table and `p` a partitioned parent; both hold or route tenant rows. Views and
- * materialized views are deliberately *not* here, and their absence is a refusal rather than an
- * omission: a view over a tenant table runs with its owner's rights unless it sets
- * `security_invoker`, and since migrations run as the owner that means it bypasses the policy
- * entirely; a materialized view is never subject to row-level security at all, so its contents stay
- * readable by anyone holding `SELECT` on it. Both were invisible to the first version of this gate
- * and both were shown to leak. Adding one needs a decision about which, not a registry entry.
+ * `r` is an ordinary table and `p` a partitioned parent; both hold or route tenant rows. `v` and `m`
+ * are views and materialized views, admitted by ADR 0051 under the rules in `VIEW_OPTION` and the
+ * dependency check - ADR 0050 refused them outright, which was a placeholder for the decision rather
+ * than the decision. A foreign table (`f`) is still refused: it is data this database does not hold
+ * and cannot police.
  */
-export const CLASSIFIABLE_RELKINDS = ['r', 'p'] as const;
+export const CLASSIFIABLE_RELKINDS = ['r', 'p', 'v', 'm'] as const;
+
+/**
+ * The option that makes a view safe, and the exact `reloptions` entry Postgres stores for it.
+ *
+ * Required on **every** view, not only those that read tenant data. A view's base tables change over
+ * time, so an exemption would need re-deciding on every migration, and the option costs nothing on a
+ * view that reads nothing scoped. A rule with a condition in it is a rule people get wrong.
+ */
+export const VIEW_OPTION = 'security_invoker=true';

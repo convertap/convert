@@ -12,6 +12,7 @@ import {
   TABLE_ACCESS_BLOCKERS,
   TENANT_KEY,
   TENANT_TABLE,
+  VIEW_OPTION,
   canonicalPolicySql,
 } from '../src/db/access';
 import type { TableAccess } from '../src/db/access';
@@ -34,10 +35,11 @@ import * as schema from '../src/db/schema';
  *     `workspace_id`. A child table with an FK to tenant data and no such column of its own -
  *     `lead_note` with a `lead_id` - passed with a `reason` a reviewer would accept, and returned
  *     every tenant's rows. Reachability is a property of the schema graph, so the graph gets read.
- *   - **Views and materialized views are refused.** They are not `relkind = 'r'`, so the original
- *     queries could not see them. A view runs with its owner's rights unless `security_invoker` is
- *     set, and migrations run as the owner; a materialized view is never subject to RLS at all.
- *     Both were demonstrated leaking. Until there is a decision, their existence fails the build.
+ *   - **Views must set `security_invoker`, and a materialized view may not read tenant data.** They
+ *     are not `relkind = 'r'`, so the original queries could not see them at all, and both were
+ *     demonstrated returning a full tenant table. A view runs with its owner's rights unless the
+ *     option is set, and migrations run as the owner; a materialized view is never subject to RLS,
+ *     so no option saves it and the dependency graph is what refuses it (ADR 0051).
  *   - **Partitioned parents are 'p', not 'r'.** A partitioned tenant table with grants and no RLS
  *     passed while the gate printed "there are no public tables yet". Partitions inherit their
  *     root's entry and are held to the same rules, because reading a partition directly applies
@@ -102,6 +104,8 @@ type Relation = {
   owner: string;
   root: string;
   isPartition: boolean;
+  /** `reloptions`, which is where a view records `security_invoker` (ADR 0051). */
+  options: string[] | null;
 };
 
 type ForeignKey = {
@@ -272,6 +276,65 @@ const main = async () => {
     }
   }
 
+  // The owner half, which nothing asserted until ADR 0052. A migration operates on every tenant's
+  // rows by definition, so a boundary built to scope one tenant's requests must not apply to it -
+  // and every row-scoped table is FORCE ROW LEVEL SECURITY, which removes the owner's exemption. An
+  // ordinary owner therefore turns a backfill into `UPDATE 0` that reports success, which under
+  // forward-only migrations is the worst available failure. Measured, not theorised.
+  const owner = await db.execute<{
+    current_user: string;
+    rolsuper: boolean;
+    rolbypassrls: boolean;
+  }>(sql`
+    select current_user, r.rolsuper, r.rolbypassrls
+    from pg_roles r
+    where r.rolname = current_user
+  `);
+  const ownerRole = owner.rows[0];
+  if (!ownerRole) {
+    roleFailures.push('could not read the migration owner role attributes');
+  } else {
+    if (!ownerRole.rolsuper && !ownerRole.rolbypassrls) {
+      roleFailures.push(
+        `${ownerRole.current_user}: is the migration owner and can neither bypass RLS nor is a ` +
+          'superuser. Every row-scoped table forces RLS, so a data migration running as this role ' +
+          'sees no rows and a backfill becomes UPDATE 0 reporting success. Grant BYPASSRLS ' +
+          'deliberately and record it (ADR 0052)',
+      );
+    }
+    if (role && ownerRole.current_user === role.current_user) {
+      roleFailures.push(
+        `${ownerRole.current_user}: DATABASE_URL and DATABASE_URL_APP are the same role, which ` +
+          'collapses the split ADR 0042 exists to create',
+      );
+    }
+  }
+
+  // Attributes and privileges both reach a role through membership, so an inherited path from the
+  // application role to the owner hands the application the bypass ADR 0052 grants the owner. This
+  // is the case that would otherwise pass every other check.
+  if (role && ownerRole) {
+    const membership = await db.execute<{ path: string }>(sql`
+      with recursive climb(oid, path) as (
+        select r.oid, r.rolname::text
+        from pg_roles r
+        where r.rolname = ${role.current_user}
+        union all
+        select parent.oid, climb.path || ' -> ' || parent.rolname
+        from climb
+        join pg_auth_members m on m.member = climb.oid
+        join pg_roles parent on parent.oid = m.roleid
+      )
+      select path from climb where oid = (select oid from pg_roles where rolname = ${ownerRole.current_user})
+    `);
+    for (const row of membership.rows) {
+      roleFailures.push(
+        `${role.current_user} is a member of the migration owner (${row.path}), so it inherits ` +
+          'that role and with it the ability to bypass every policy',
+      );
+    }
+  }
+
   // A default privilege granting table rights to the application role defeats the registry for
   // every table a later migration creates. Deleting the ALTER DEFAULT PRIVILEGES statement from
   // bootstrap.sql does not undo one already installed in an existing database - that needs an
@@ -297,13 +360,29 @@ const main = async () => {
   }
 
   subchecks.push({
-    name: 'application role attributes',
+    name: 'database roles',
     failures: roleFailures,
     real: true,
     verdict:
-      `${role?.current_user} is neither superuser nor BYPASSRLS, and no default privilege grants ` +
-      'rights on future tables',
+      `${role?.current_user} is neither superuser nor BYPASSRLS and is not a member of the owner; ` +
+      `${ownerRole?.current_user} can bypass RLS as ADR 0052 requires; no default privilege ` +
+      'grants rights on future tables',
   });
+
+  // The roles are a precondition, not one finding among nine, so this reports and stops rather than
+  // collecting. Everything below assumes the owner can act on every row and the application role
+  // cannot: with a non-bypassing owner the isolation probe cannot even insert its own fixture rows,
+  // and it died with a bare Postgres 42501 that named none of this - the diagnosis above was
+  // already in hand and was never printed. Found by pointing DATABASE_URL at an ordinary role.
+  if (roleFailures.length > 0) {
+    console.error('RLS assertion failed on the database roles, so nothing after it was run:\n');
+    for (const failure of roleFailures) console.error(`  ${failure}`);
+    console.error(
+      '\nEvery later check assumes the owner can reach every row and the application role cannot.' +
+        '\nSee docs/adr/0052-the-migration-owner-bypasses-row-level-security.md',
+    );
+    process.exit(1);
+  }
 
   // ---- catalogue state, shared by everything below -------------------------------------------
   //
@@ -317,7 +396,8 @@ const main = async () => {
            c.relforcerowsecurity as forced,
            o.rolname as owner,
            coalesce(rt.relname, c.relname) as root,
-           c.relispartition as "isPartition"
+           c.relispartition as "isPartition",
+           c.reloptions::text[] as options
     from pg_class c
     join pg_namespace n on n.oid = c.relnamespace
     join pg_roles o on o.oid = c.relowner
@@ -411,18 +491,64 @@ const main = async () => {
 
   for (const relation of relations.rows) {
     if ((CLASSIFIABLE_RELKINDS as readonly string[]).includes(relation.relkind)) continue;
-    const what =
-      relation.relkind === 'v'
-        ? 'a view, which runs with its owner rights unless security_invoker is set - and ' +
-          'migrations run as the owner, so it bypasses the policies of every table it reads'
-        : relation.relkind === 'm'
-          ? 'a materialized view, which row-level security never applies to, so its contents are ' +
-            'readable by anyone holding SELECT on it'
-          : `relkind ${relation.relkind}, which TABLE_ACCESS does not model`;
     catalogueFailures.push(
-      `${relation.relname}: is ${what}. ADR 0050 classifies tables only, so this needs a decision ` +
-        'about how it is scoped rather than a registry entry',
+      `${relation.relname}: is relkind ${relation.relkind}, which TABLE_ACCESS does not model. A ` +
+        'foreign table holds data this database cannot police, so it needs a decision rather than ' +
+        'a registry entry',
     );
+  }
+
+  // Views and materialized views (ADR 0051). A view is safe when it reads its base tables as the
+  // invoking role, which is what security_invoker does; without it a view reads them as its owner,
+  // and migrations run as the owner. Measured on Postgres 16.13: a plain view over a policed table
+  // returned every tenant's rows where the table returned one.
+  const views = relations.rows.filter((r) => r.relkind === 'v' || r.relkind === 'm');
+  for (const view of views) {
+    const access = REGISTRY[view.relname];
+    if (access && access.kind !== 'view') {
+      catalogueFailures.push(
+        `${view.relname}: is a ${view.relkind === 'v' ? 'view' : 'materialized view'} classified ` +
+          `${access.kind}. Only the view class describes one`,
+      );
+    }
+    if (view.relkind === 'v' && !(view.options ?? []).includes(VIEW_OPTION)) {
+      catalogueFailures.push(
+        `${view.relname}: is a view without ${VIEW_OPTION}, so it reads its base tables as its ` +
+          'owner rather than as the invoking role, and every policy on them is bypassed. Add ' +
+          `with (${VIEW_OPTION}) - required on every view, whatever it selects from (ADR 0051)`,
+      );
+    }
+  }
+
+  // A materialized view cannot be made safe: row-level security is never applied when reading one,
+  // because the rows were computed at refresh time. So it must not be able to read row-scoped data,
+  // and the dependency graph answers that rather than the definition looking harmless.
+  if (views.some((v) => v.relkind === 'm')) {
+    const reads = await db.execute<{ viewname: string; base: string }>(sql`
+      select distinct dependent.relname as viewname, base.relname as base
+      from pg_depend d
+      join pg_rewrite r on r.oid = d.objid
+      join pg_class dependent on dependent.oid = r.ev_class
+      join pg_class base on base.oid = d.refobjid
+      join pg_namespace n on n.oid = dependent.relnamespace
+      where d.classid = 'pg_rewrite'::regclass
+        and d.refclassid = 'pg_class'::regclass
+        and dependent.oid <> base.oid
+        and dependent.relkind = 'm'
+        and n.nspname = 'public'
+    `);
+    for (const row of reads.rows) {
+      const baseAccess = REGISTRY[row.base];
+      if (baseAccess && isRlsAccess(baseAccess)) {
+        catalogueFailures.push(
+          `${row.viewname}: is a materialized view reading ${row.base}, which is ` +
+            `${baseAccess.kind}. Row-level security is never applied when reading a materialized ` +
+            'view, and no option changes that, so its contents are readable in full by anyone ' +
+            'holding SELECT on it. A real table maintained by the worker, with its own policy, is ' +
+            'the replacement (ADR 0051)',
+        );
+      }
+    }
   }
 
   for (const [name] of ENTRIES) {
@@ -717,7 +843,9 @@ const main = async () => {
       cross join unnest(array[
         'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'
       ]) as p(priv)
-      where n.nspname = 'public' and c.relkind in ('r', 'p') and c.relname not like 'rls\_%'
+      where n.nspname = 'public'
+        and c.relkind in ('r', 'p', 'v', 'm')
+        and c.relname not like 'rls\_%'
     `);
 
     for (const table of tables) {

@@ -16,6 +16,15 @@ Configure these on the API service in each Railway environment:
 `APP_DB_PASSWORD` and the password embedded in `DATABASE_URL_APP` must match. The application
 refuses to fall back to `DATABASE_URL`.
 
+**`DATABASE_URL` is the credential with unrestricted read, by design (ADR 0052).** Its role must be
+able to bypass row-level security — superuser, or holding `BYPASSRLS` — because a migration operates
+on every tenant's rows by definition, and every row-scoped table is `FORCE ROW LEVEL SECURITY`, which
+removes the owner's exemption. An ordinary owner therefore makes a backfill affect zero rows while
+reporting success, which under forward-only migrations is the worst available failure. G7 asserts the
+attribute rather than assuming it, so pointing `DATABASE_URL` at a restricted role fails the build
+with the reason named. Treat that credential accordingly: it is the highest-blast-radius secret in
+the system, it belongs in Infisical (ADR 0020), and nothing but bootstrap and migrations uses it.
+
 ## Deploy
 
 1. Merge feature pull requests to `develop`. This runs every gate and does not deploy.
