@@ -50,10 +50,17 @@ the option fails G7, whatever it selects from — the check does not try to work
 particular view is dangerous, because the option costs nothing on a view that reads no tenant data
 and the exception would be the thing that gets copied.
 
-**A materialized view may not read a row-scoped table, transitively.** G7 walks view dependencies
-through `pg_rewrite` and `pg_depend`, and fails a materialized view whose base relations include any
-table classified `workspace-rls` or `user-rls`. A materialized view over unscoped data is permitted
-and needs no option, because there is nothing for a policy to protect.
+**A materialized view may not read a row-scoped table, transitively, and may not call a routine at
+all.** G7 walks view dependencies through `pg_rewrite` and `pg_depend` and fails a materialized view
+whose base relations include any table classified `workspace-rls` or `user-rls`. That walk cannot see
+through a function: one declared `returns table (...)` leaves no dependency on the tables it selects
+from, so `create materialized view mv as select * from all_workspaces()` was invisible to it while
+`REFRESH` — running as the owner, which ADR 0052 requires to bypass — stored every tenant's rows.
+Review demonstrated it. So a materialized view whose definition references any routine is refused
+outright rather than analysed. Dependencies on built-in functions are not recorded in `pg_depend`, so
+this fires only on routines somebody wrote. A materialized view over unscoped data, selecting
+directly from relations, is permitted and needs no option, because there is nothing for a policy to
+protect.
 
 **`security_invoker` does not make a view a way to widen access.** The invoking role still needs its
 own privileges on the base tables, so a view cannot be used to hand `convert_app` a table its entry
@@ -112,7 +119,8 @@ is **vacuous today because the schema holds no views and no migrations exist**:
   requirement - and therefore an escape hatch a table could use to skip the graph rules entirely.
   Review demonstrated it by changing one word in a previously-leaking entry;
 - a materialized view whose transitive base relations include a `workspace-rls` or `user-rls` table
-  fails, naming the path it reads through;
+  fails, naming the path it reads through — and one whose definition calls any routine fails
+  regardless of what that routine reads, because the dependency graph cannot follow it;
 - a `view` entry's `appPrivileges` are compared as effective access, exactly as for a table, so a
   column grant or a group-inherited privilege on a view is caught too.
 

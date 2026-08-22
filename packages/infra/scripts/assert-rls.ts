@@ -67,12 +67,20 @@ import * as schema from '../src/db/schema';
  * that the canonical one excludes a row. Both, or neither means much.
  */
 
+/**
+ * `real` proved something. `waiting` has nothing to iterate yet and becomes real with the first
+ * migration. `conditional` may never fire at all, and saying otherwise is the same overstatement
+ * ADR 0048 is about, one level up: `table ownership` needs `convert_app` to own a row-scoped table,
+ * which `bootstrap.sql` forbids outright, and `definer routines` needs somebody to write one.
+ */
+type SubcheckStatus = 'real' | 'waiting' | 'conditional';
+
 type Subcheck = {
   name: string;
   failures: string[];
   /** What was actually proven, or - for a check with nothing to iterate - why it proved nothing. */
   verdict: string;
-  real: boolean;
+  status: SubcheckStatus;
 };
 
 const ENTRIES = Object.entries(TABLE_ACCESS) as [string, TableAccess][];
@@ -245,7 +253,7 @@ const main = async () => {
   subchecks.push({
     name: 'declared schema to registry',
     failures: classification,
-    real: declaredTables.length > 0,
+    status: declaredTables.length > 0 ? 'real' : 'waiting',
     verdict:
       declaredTables.length > 0
         ? `${declaredTables.length} declared table(s) classified: ${declaredTables.join(', ')}`
@@ -396,7 +404,7 @@ const main = async () => {
   subchecks.push({
     name: 'database roles',
     failures: roleFailures,
-    real: true,
+    status: 'real',
     verdict:
       `${role?.current_user} is ${APP_ROLE}, is neither superuser nor BYPASSRLS, and can reach ` +
       `no role that bypasses; ${ownerRole?.current_user} can bypass RLS as ADR 0052 requires; no ` +
@@ -415,7 +423,12 @@ const main = async () => {
       '\nEvery later check assumes the owner can reach every row and the application role cannot.' +
         '\nSee docs/adr/0052-the-migration-owner-bypasses-row-level-security.md',
     );
-    process.exit(1);
+    // Exit 3, not 1. CI has a step that points DATABASE_URL at a deliberately restricted role and
+    // requires the gate to reject it - and asserting merely "non-zero" made that step pass on any
+    // crash, including a bad password or a TypeScript error, and even with this whole check
+    // deleted, because the isolation probe cannot insert its own fixture rows under such a role
+    // either. A dedicated code makes the step assert the cause rather than the symptom.
+    process.exit(3);
   }
 
   // ---- catalogue state, shared by everything below -------------------------------------------
@@ -516,7 +529,9 @@ const main = async () => {
   subchecks.push({
     name: 'table ownership',
     failures: ownershipFailures,
-    real: ownedNeedingPolicy.length > 0,
+    // Conditional, not waiting: bootstrap.sql denies convert_app CREATE and ownership, so no
+    // migration can make this fire. ADR 0042 named it as real today and it never was.
+    status: ownedNeedingPolicy.length > 0 ? 'real' : 'conditional',
     verdict:
       ownedNeedingPolicy.length > 0
         ? `${ownedNeedingPolicy.length} table(s) owned by the application role force RLS`
@@ -619,6 +634,34 @@ const main = async () => {
       left join pg_class rt on rt.oid = pg_partition_root(base.oid)
       where closure.depth > 0 and base.relkind in ('r', 'p')
     `);
+    // A dependency on a routine hides the base table entirely: `create materialized view mv as
+    // select * from all_workspaces()` where the function `returns table (...)` produces no
+    // pg_class edge at all, so the closure above sees nothing. REFRESH runs as the owner, which
+    // ADR 0052 requires to bypass, so the stored rows are every tenant's. Refused unconditionally
+    // rather than analysed - dependencies on built-in functions are not recorded in pg_depend, so
+    // this only fires on routines somebody wrote.
+    const throughRoutine = await db.execute<{ viewname: string; routine: string }>(sql`
+      select distinct dependent.relname as viewname, pr.proname as routine
+      from pg_depend d
+      join pg_rewrite r on r.oid = d.objid
+      join pg_class dependent on dependent.oid = r.ev_class
+      join pg_proc pr on pr.oid = d.refobjid
+      join pg_namespace n on n.oid = dependent.relnamespace
+      where d.classid = 'pg_rewrite'::regclass
+        and d.refclassid = 'pg_proc'::regclass
+        and dependent.relkind = 'm'
+        and n.nspname = 'public'
+    `);
+    for (const row of throughRoutine.rows) {
+      catalogueFailures.push(
+        `${row.viewname}: is a materialized view whose definition calls ${row.routine}(). What a ` +
+          'routine reads cannot be followed through the dependency graph - a function returning ' +
+          'TABLE leaves no dependency on the tables it selects from - and REFRESH runs as the ' +
+          'owner, which bypasses row-level security. A materialized view here may only select ' +
+          'directly from relations (ADR 0051)',
+      );
+    }
+
     for (const row of reads.rows) {
       const baseAccess = REGISTRY[row.root];
       if (baseAccess && isRlsAccess(baseAccess)) {
@@ -656,7 +699,7 @@ const main = async () => {
   subchecks.push({
     name: 'registry to database catalogue',
     failures: catalogueFailures,
-    real: relations.rows.length > 0,
+    status: relations.rows.length > 0 ? 'real' : 'waiting',
     verdict:
       relations.rows.length > 0
         ? `${relations.rows.length} relation(s) in public classified ` +
@@ -750,21 +793,40 @@ const main = async () => {
   // tenant's rows. This check existed, was deleted as redundant when the graph landed, and is back.
   for (const col of columns.rows) {
     if (col.column !== TENANT_COLUMN) continue;
-    if (col.type !== 'uuid' || !col.notNull) continue;
     const table = inDatabase.get(col.relname);
     const access = table ? entryFor(table) : REGISTRY[col.relname];
     if (!access) continue;
+
+    // The name alone is the trigger. The first version of this check also required the column to be
+    // a NOT NULL uuid before it would look, which made the type and nullability *preconditions for
+    // noticing* rather than extra findings - so `workspace_id uuid` without NOT NULL silenced it
+    // entirely. That is the idiomatic spelling for the very table this check was restored for: one
+    // with no foreign key has nothing to make the column NOT NULL against. Review demonstrated the
+    // leak. The same `continue` also swallowed `workspace_id text` and a domain over uuid.
+    const notes: string[] = [];
+    if (col.type !== 'uuid') notes.push(`its type is ${col.type} rather than uuid`);
+    if (!col.notNull) {
+      notes.push(
+        'it is nullable, so a row with a null tenant id is unreachable rather than scoped',
+      );
+    }
+    const suffix = notes.length > 0 ? ` Also: ${notes.join('; ')}.` : '';
+
     if (access.kind !== 'workspace-rls') {
       graphFailures.push(
-        `${col.relname}: carries a NOT NULL uuid ${TENANT_COLUMN} and is classified ` +
-          `${access.kind}. Whatever else is true of it, a column with that name holds a tenant id, ` +
-          'so the table is tenant data and needs the tenancy policy - a missing foreign key is not ' +
-          'evidence of anything',
+        `${col.relname}: carries a ${TENANT_COLUMN} column and is classified ${access.kind}. A ` +
+          'column with that name holds a tenant id, so the table is tenant data and needs the ' +
+          'tenancy policy - a missing foreign key is not evidence of anything, and neither is a ' +
+          `missing NOT NULL.${suffix}`,
       );
     } else if (access.scopeColumn !== TENANT_COLUMN) {
       graphFailures.push(
         `${col.relname}: carries ${TENANT_COLUMN} but scopes by ${access.scopeColumn}, so the ` +
-          'policy compares something other than the column holding the tenant id',
+          `policy compares something other than the column holding the tenant id.${suffix}`,
+      );
+    } else if (notes.length > 0) {
+      graphFailures.push(
+        `${col.relname}: is workspace-rls on ${TENANT_COLUMN}, but ${notes.join('; ')}`,
       );
     }
   }
@@ -835,7 +897,7 @@ const main = async () => {
   subchecks.push({
     name: 'tenancy graph',
     failures: graphFailures,
-    real: inDatabase.size > 0,
+    status: inDatabase.size > 0 ? 'real' : 'waiting',
     verdict:
       inDatabase.size > 0
         ? `${foreignKeys.rows.length} foreign key(s) walked; no grant-only table reaches tenant data`
@@ -943,7 +1005,7 @@ const main = async () => {
     subchecks.push({
       name: `${kind} policies`,
       failures,
-      real: present.length > 0,
+      status: present.length > 0 ? 'real' : 'waiting',
       verdict:
         present.length > 0
           ? `${present.length} table(s) carry exactly the canonical ${SCOPE_GUC[kind]} policy`
@@ -1063,7 +1125,7 @@ const main = async () => {
   subchecks.push({
     name: 'effective privileges',
     failures: grantFailures,
-    real: inDatabase.size > 0,
+    status: inDatabase.size > 0 ? 'real' : 'waiting',
     verdict:
       inDatabase.size > 0
         ? `${inDatabase.size} table(s) hold exactly their declared privileges, with no column ` +
@@ -1089,16 +1151,20 @@ const main = async () => {
     owner: string;
     canBypass: boolean;
     appCanExecute: boolean;
-    hasSearchPath: boolean;
+    searchPath: string | null;
   }>(sql`
     select p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' as routine,
            o.rolname as owner,
            (o.rolsuper or o.rolbypassrls) as "canBypass",
            has_function_privilege(${APP_ROLE}, p.oid, 'EXECUTE') as "appCanExecute",
-           coalesce(
-             exists (select 1 from unnest(p.proconfig) as cfg where cfg like 'search\\_path=%'),
-             false
-           ) as "hasSearchPath"
+           -- starts_with, not LIKE: an underscore is a LIKE wildcard and the backslash escape
+           -- collapses inside a template literal, which is how the fixture exclusion went wrong.
+           (
+             select cfg
+             from unnest(coalesce(p.proconfig, '{}'::text[])) as cfg
+             where starts_with(cfg, 'search_path=')
+             limit 1
+           ) as "searchPath"
     from pg_proc p
     join pg_namespace n on n.oid = p.pronamespace
     join pg_roles o on o.oid = p.proowner
@@ -1106,28 +1172,55 @@ const main = async () => {
   `);
 
   for (const routine of definers.rows) {
-    if (routine.canBypass && routine.appCanExecute) {
+    // No `appCanExecute` condition. Asking whether the application can execute *this* routine is
+    // the narrow version of the question, and review beat it with two hops: an inner definer owned
+    // by the bypassing owner with EXECUTE revoked, called by an outer definer owned by an ordinary
+    // role with EXECUTE defaulting to PUBLIC. Each routine satisfied one clause; the pair leaked.
+    // The migration owner is by design the only bypassing role, so a definer routine it owns has no
+    // legitimate use here and the reachability question does not need answering.
+    if (routine.canBypass) {
       definerFailures.push(
-        `${routine.routine}: is SECURITY DEFINER, owned by ${routine.owner} which can bypass ` +
-          `row-level security, and ${APP_ROLE} may execute it. It therefore reads every tenant's ` +
-          'rows on behalf of a caller the policies would have scoped, and EXECUTE defaults to ' +
-          'PUBLIC so no GRANT appears in the migration for a reviewer to notice. Own it with a ' +
-          'non-bypassing role, or revoke EXECUTE from PUBLIC and from the application',
+        `${routine.routine}: is SECURITY DEFINER and owned by ${routine.owner}, which can bypass ` +
+          'row-level security, so every row it reads is unscoped no matter who calls it or through ' +
+          `how many hops (${APP_ROLE} ` +
+          `${routine.appCanExecute ? 'can execute it directly' : 'cannot execute it directly, which does not help - another routine can'}). ` +
+          'Own it with a non-bypassing role, or do not use SECURITY DEFINER (ADR 0052)',
       );
     }
-    if (!routine.hasSearchPath) {
+
+    // Presence is not enough. `SET search_path = public` is what people actually write, and it
+    // leaves pg_temp ahead of public in the effective path, so the application can shadow a table
+    // the routine names unqualified - review created a temp table called `workspace` and the
+    // routine read it. An empty search_path, or one ending in pg_temp, is safe.
+    const value = routine.searchPath?.slice('search_path='.length).trim() ?? null;
+    if (value === null) {
       definerFailures.push(
         `${routine.routine}: is SECURITY DEFINER without SET search_path, so an unqualified name ` +
           `inside it resolves through the caller's search_path, and ${APP_ROLE} can create ` +
           'objects in a temp schema that precedes public',
       );
+    } else {
+      const parts = value
+        .split(',')
+        .map((part) => part.trim().replace(/^"(.*)"$/, '$1'))
+        .filter((part) => part.length > 0);
+      const safe = parts.length === 0 || parts[parts.length - 1] === 'pg_temp';
+      if (!safe) {
+        definerFailures.push(
+          `${routine.routine}: is SECURITY DEFINER with search_path = ${value}, which leaves ` +
+            'pg_temp ahead of it in the effective search path, so an unqualified name inside the ' +
+            `routine can resolve to a temp table ${APP_ROLE} created. Use an empty search_path, ` +
+            'or put pg_temp last',
+        );
+      }
     }
   }
 
   subchecks.push({
     name: 'definer routines',
     failures: definerFailures,
-    real: definers.rows.length > 0,
+    // Conditional: nothing in a migration forces a SECURITY DEFINER routine to exist.
+    status: definers.rows.length > 0 ? 'real' : 'conditional',
     verdict:
       definers.rows.length > 0
         ? `${definers.rows.length} SECURITY DEFINER routine(s) are owned by a non-bypassing role or unreachable from ${APP_ROLE}`
@@ -1149,8 +1242,25 @@ const main = async () => {
   const B = '22222222-2222-2222-2222-222222222222';
   const isolation: string[] = [];
 
+  // Same clash guard deriveCanonicalQual has. This probe used to open with `drop table if exists`
+  // while the allowlist made the name invisible to the catalogue checks, so a real table called
+  // rls_probe was silently deleted and never reported - review created one with a row in it and
+  // watched it disappear.
+  const probeClash = await db.execute<{ ok: boolean }>(sql`
+    select true as ok
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public' and c.relname = 'rls_probe'
+  `);
+  if (probeClash.rows.length > 0) {
+    throw new Error(
+      "rls_probe already exists in the public schema. That is this script's fixture name, so " +
+        'either a previous run died before dropping it or a migration has claimed the name. ' +
+        'Inspect it rather than letting the gate drop it.',
+    );
+  }
+
   try {
-    await db.execute(sql`drop table if exists rls_probe`);
     await db.execute(sql`
       create table rls_probe (
         id bigserial primary key,
@@ -1229,7 +1339,7 @@ const main = async () => {
   subchecks.push({
     name: 'cross-tenant isolation',
     failures: isolation,
-    real: true,
+    status: 'real',
     verdict:
       'a cross-tenant read returned nothing, an empty context returned nothing, and the owner ' +
       'saw both rows',
@@ -1255,17 +1365,24 @@ const main = async () => {
     process.exit(1);
   }
 
-  const real = subchecks.filter((check) => check.real).length;
+  const counts = {
+    real: subchecks.filter((c) => c.status === 'real').length,
+    waiting: subchecks.filter((c) => c.status === 'waiting').length,
+    conditional: subchecks.filter((c) => c.status === 'conditional').length,
+  };
   console.warn(
-    `RLS ok. ${real} of ${subchecks.length} checks proved something. What each did and did not:\n`,
+    `RLS ok. ${counts.real} of ${subchecks.length} checks proved something; ${counts.waiting} ` +
+      `wait for a schema; ${counts.conditional} may never fire. What each did and did not:\n`,
   );
+  const pad = { real: 'real       ', waiting: 'waiting    ', conditional: 'conditional' };
   for (const check of subchecks) {
-    console.warn(`  [${check.real ? 'real   ' : 'vacuous'}] ${check.name}: ${check.verdict}`);
+    console.warn(`  [${pad[check.status]}] ${check.name}: ${check.verdict}`);
   }
-  if (real < subchecks.length) {
+  if (counts.waiting > 0 || counts.conditional > 0) {
     console.warn(
-      '\nThe vacuous checks above are not passes. They report that the schema they exist to check ' +
-        'does not exist yet, and they become real with the first migration (ADR 0048).',
+      '\nNeither the waiting nor the conditional checks are passes. A waiting check becomes real ' +
+        'with the first migration that gives it something to iterate. A conditional one may never ' +
+        'fire at all, and calling it "not yet real" would overstate it (ADR 0048).',
     );
   }
   process.exit(0);

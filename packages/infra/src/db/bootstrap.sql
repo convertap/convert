@@ -41,6 +41,18 @@ begin
 end
 $$;
 
+-- TEMP is granted to PUBLIC by default, and a temp schema sits ahead of public in the effective
+-- search path. That is the precondition for shadowing a table a SECURITY DEFINER routine names
+-- unqualified: review created a temp table called `workspace` and watched such a routine read it
+-- instead of the real one. G7 also refuses a definer routine whose search_path leaves pg_temp
+-- ahead of public, but removing the capability is better than checking for its misuse, and the
+-- application has no use for a temporary table.
+do $$
+begin
+  execute format('revoke temporary on database %I from public', current_database());
+end
+$$;
+
 grant usage on schema public to convert_app;
 
 -- Table privileges are NOT granted here, and there is no ALTER DEFAULT PRIVILEGES for
