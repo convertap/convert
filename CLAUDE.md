@@ -46,26 +46,29 @@ Zod boundary contracts, and exposes database-backed readiness. The twelve invari
 registered but remain `todo` until their schema features exist. Guardrails G1–G16 run in CI and
 five of them run before every push.
 
-**What is deliberately not built.** `packages/infra/src/db/schema.ts` holds `workspace` and
-nothing else, and `TABLE_ACCESS` in `packages/infra/src/db/access.ts` classifies that one table.
-There are no migrations. That is not an oversight: the product rules are settled, but their tables
-must land in an ordered migration plan so each tenancy and data-integrity invariant arrives with the
-table it governs. Every declared table must appear in `TABLE_ACCESS` saying how it is protected —
-scoped by workspace, scoped by user, or grants alone with a written reason (ADR 0050) — and `user`
-and `verification_attempt` are named in `TABLE_ACCESS_BLOCKERS`, which fails the build if either is
-declared before CV-19 decides their read path.
+**The first migration has landed** (22 August 2026, CV-12 and CV-19). `schema.ts` declares
+`workspace`, `user` and `workspace_member`; `TABLE_ACCESS` classifies all three; and
+`0000_huge_medusa.sql` carries their policies, grants and the identity read path of ADR 0054. A third
+role, `convert_auth`, owns two `SECURITY DEFINER` lookup functions so sign-in can find an account
+before any principal exists without holding a privilege on the table. Every declared table must
+appear in `TABLE_ACCESS` saying how it is protected — scoped by workspace, scoped by user, or grants
+alone with a written reason (ADR 0050) — and `verification_attempt` is still named in
+`TABLE_ACCESS_BLOCKERS`: its mechanism is decided, and it lands with the auth module that writes to
+it.
 
-**Three gates currently pass without checking anything.** Two by design, one that was miscounted until
-21 August 2026. Say so rather than reporting a green tick:
+The remaining tables are still ahead, in slices: the CRM core, then commerce, then messaging. That
+order and its reasoning are on the **Schema and migration plan** map, not here.
+
+**G7 and G8 graduated on 22 August 2026**, with the first migration. G7 reports twelve subchecks, all real, none waiting and none conditional; the two that were conditional now fire, because table ownership asks who owns each policed table and whether the application can become or inherit them. G8 runs seven integration tests as `convert_app` against real Postgres, four of which fail if that role is granted BYPASSRLS. Five independent review rounds produced ten reproduced findings on the way, every one of which passed a green gate first, and each is now a check verified by building the shape and watching it fail. **What G7 still does not assert is written down in ADR 0054's Enforcement section** rather than left for the next person to discover: sequence privileges, `convert_auth`'s own role attributes, and the fact that the single-schema inventory is asserted rather than inspected.
+
+**Two gates still pass without checking much.** Say so rather than reporting a green tick:
 
 | Gate | Why it is vacuous today | Real when |
 |------|-------------------------|-----------|
-| ~~G7 migrations and RLS~~ | **Partly vacuous, and it says which parts, per subcheck.** Ten subchecks, one line each, tagged real or vacuous, with the count printed (ADR 0050–0052). **Three real:** the database roles — `convert_app` is itself, is neither superuser nor BYPASSRLS, reaches no role that bypasses, and the owner *can* bypass as ADR 0052 requires, with no default privilege on future tables; every table declared in `schema.ts` is classified in `TABLE_ACCESS`; and a cross-tenant read on a fixture table returns nothing while the owner sees both rows (ADR 0042). **Five waiting** on a schema: registry-to-catalogue, the tenancy graph, both policy classes, effective privileges. **Two conditional, which may never fire:** table ownership (`bootstrap.sql` forbids `convert_app` owning anything) and definer routines (nothing forces one to exist) | a *waiting* subcheck becomes real with the first migration that gives it something to iterate; a *conditional* one may never, and the script says which is which |
-| G8 integration tests | `tests/integration/` holds only `.gitkeep` | there is a repository to test against real Postgres |
 | G9 performance budget | `apps/web` is a placeholder page, so the budget is trivially met | the pipeline and contact screens exist |
-| G6 invariant coverage | It checks that a spec **file** exists per invariant. All twelve are `test.todo`, with a header saying so, so nothing is asserted. It was listed among the working gates until this was noticed | the entities land, one invariant at a time, with the table each governs |
+| G6 invariant coverage | It checks that a spec **file** exists per invariant, and eleven of the twelve are still `test.todo`. **I1 is the exception**: its workspace-scoping half is proven by `tests/integration/tenancy.spec.ts` under G8, because the `invariants` project has no database and a unit test mocking one would prove the mock. The spec file records where to look and keeps the todo for the part that is genuinely unbuilt, the audited platform-admin exception of ADR 0035 | the entities land, one invariant at a time, with the table each governs. I1 shows the shape: the assertion lives where the boundary is |
 
-G1–G5 and G13–G15 are doing real work today. **G4 belonged on the list above until 21 August**: it is
+G1–G5, G13–G15 and G16 are doing real work today. **G4 belonged on the list above until 21 August**: it is
 documented as "no new warnings" and ran `eslint .` with no `--max-warnings`, so a warning exited 0.
 That is fixed, and the pattern is worth more than the fix — a gate can be listed as working, run on
 every push, and assert nothing. ADR 0048 is the rule that came out of it.
