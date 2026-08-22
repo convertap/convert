@@ -1,4 +1,14 @@
-import { pgEnum, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import {
+  check,
+  index,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  unique,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import {
   CONSENT_CHANNELS,
   INVOICE_STATES,
@@ -96,6 +106,77 @@ export const workspace = pgTable('workspace', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * A person, independent of any workspace (ADR 0030, ADR 0047).
+ *
+ * One account can belong to several workspaces, so nothing here is tenant-scoped. It is `user-rls`
+ * scoped by its own `id`: the row the application may read is the one `app.current_user` names.
+ *
+ * **No password column, deliberately.** A1 makes every sign-in a one-time code (ADR 0029), so there
+ * is no credential on this table to steal. The code itself lives in `verification_attempt`, which is
+ * still blocked pending its own migration, and that table never stores the code either.
+ *
+ * Sign-in cannot read this table. It runs before any principal exists, so `app.current_user` is
+ * empty and the policy returns nothing. The lookup goes through a `SECURITY DEFINER` function owned
+ * by `convert_auth` instead, which returns one row or none (ADR 0054).
+ */
+export const user = pgTable(
+  'user',
+  {
+    id: uuid('id').primaryKey(),
+    /**
+     * Either identifier may be absent and at least one must be present, which is the check below.
+     * A1 lets a person sign in with whichever they have, and a rep with no email is normal here.
+     */
+    phone: text('phone').unique(),
+    email: text('email').unique(),
+    name: text('name').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('user_has_an_identifier', sql`${t.phone} is not null or ${t.email} is not null`),
+  ],
+);
+
+/**
+ * Which people are in which workspace, and in what role (R3, ADR 0032).
+ *
+ * This is the table that makes a workspace reachable. `workspace` is scoped by its own `id` against
+ * `app.current_workspace`, so it answers "may I read this tenant" and never "which tenant am I";
+ * membership answers the second question.
+ *
+ * Removal is `deactivated_at`, not a delete and not `deleted_at`. It is a reversible domain state
+ * with rules attached (I7): a deactivated member keeps their name on the activity they wrote, and
+ * their assigned work has to go somewhere before they go quiet. A tombstone column would read as an
+ * absence and lose that distinction (ADR 0046).
+ */
+export const workspaceMember = pgTable(
+  'workspace_member',
+  {
+    id: uuid('id').primaryKey(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspace.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => user.id),
+    role: memberRole('role').notNull(),
+    deactivatedAt: timestamp('deactivated_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    /**
+     * One membership per person per workspace. Without this, "add member" run twice gives somebody
+     * two roles in one workspace and every permission check has to decide which one wins.
+     */
+    unique('workspace_member_one_per_workspace').on(t.workspaceId, t.userId),
+    /** The direction every permission check reads: given a user, which workspaces and what role. */
+    index('workspace_member_by_user').on(t.userId),
+  ],
+);
 
 /**
  * How a table is protected is declared in `./access.ts`, not here (ADR 0050).

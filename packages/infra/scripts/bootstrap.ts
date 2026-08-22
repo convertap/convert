@@ -43,26 +43,32 @@ const main = async () => {
   }>(sql`
     select rolname, rolsuper, rolbypassrls, rolcreaterole
     from pg_roles
-    where rolname = 'convert_app'
+    where rolname in ('convert_app', 'convert_auth')
   `);
 
-  const app = role.rows[0];
-  if (!app) throw new Error('bootstrap ran but convert_app does not exist');
-
-  // Assert the properties rather than trusting the SQL ran as intended. A role created
-  // with the wrong attributes is worse than no role, because everything downstream looks
-  // correct while the boundary is off.
+  // Assert the properties rather than trusting the SQL ran as intended. A role created with the
+  // wrong attributes is worse than no role, because everything downstream looks correct while the
+  // boundary is off. Both roles get the same check: convert_auth owns SECURITY DEFINER functions, so
+  // BYPASSRLS on it would turn every one of them into a hole with EXECUTE defaulting to PUBLIC, and
+  // G7 would refuse them (ADR 0054).
   const wrong: string[] = [];
-  if (app.rolsuper) wrong.push('is a SUPERUSER, so it bypasses every RLS policy');
-  if (app.rolbypassrls) wrong.push('has BYPASSRLS, so it bypasses every RLS policy');
-  if (app.rolcreaterole) wrong.push('can CREATE ROLE, which lets it escalate');
+  for (const name of ['convert_app', 'convert_auth']) {
+    const found = role.rows.find((r) => r.rolname === name);
+    if (!found) {
+      wrong.push(`${name}: bootstrap ran but the role does not exist`);
+      continue;
+    }
+    if (found.rolsuper) wrong.push(`${name}: is a SUPERUSER, so it bypasses every RLS policy`);
+    if (found.rolbypassrls) wrong.push(`${name}: has BYPASSRLS, so it bypasses every RLS policy`);
+    if (found.rolcreaterole) wrong.push(`${name}: can CREATE ROLE, which lets it escalate`);
+  }
   if (wrong.length > 0) {
-    console.error(`convert_app was created with the wrong attributes:`);
+    console.error('bootstrap created a role with the wrong attributes:');
     for (const w of wrong) console.error(`  ${w}`);
     process.exit(1);
   }
 
-  console.warn('bootstrap ok - convert_app exists, not superuser, not BYPASSRLS');
+  console.warn('bootstrap ok - convert_app and convert_auth exist, neither superuser nor BYPASSRLS');
   process.exit(0);
 };
 

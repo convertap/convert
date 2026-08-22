@@ -55,6 +55,42 @@ $$;
 
 grant usage on schema public to convert_app;
 
+-- The identity read path's role (ADR 0054). It owns the SECURITY DEFINER functions that sign-in
+-- calls, and nothing else. NOBYPASSRLS matters twice here: G7 refuses a definer routine owned by a
+-- bypassing role, and a routine owned by one would be a hole with EXECUTE defaulting to PUBLIC.
+--
+-- NOLOGIN, and that is the interesting part. A role owns functions without ever connecting, and
+-- nothing does connect as this one: convert_app reaches identity data only through EXECUTE on the
+-- functions it owns. So there is no password, no connection string and no third secret to provision
+-- in any environment. ADR 0054 listed that provisioning as a cost of this design; it turned out not
+-- to exist, which also removes a credential that could leak.
+--
+-- G7 still asserts convert_app cannot reach this role by any chain of membership. NOLOGIN does not
+-- prevent SET ROLE, so membership would hand over the permissive policy on "user" and with it every
+-- account.
+do $$
+begin
+  if not exists (select 1 from pg_roles where rolname = 'convert_auth') then
+    create role convert_auth nologin nosuperuser nobypassrls nocreatedb nocreaterole;
+  else
+    alter role convert_auth nologin nosuperuser nobypassrls nocreatedb nocreaterole;
+  end if;
+end
+$$;
+
+grant usage on schema public to convert_auth;
+
+-- The migration owner has to be a member of convert_auth to hand it ownership of a function:
+-- Postgres requires membership in the role you are transferring ownership to. This is the only
+-- membership edge that is allowed to exist, and it points the safe way - the owner already bypasses
+-- row-level security, so reaching convert_auth grants it nothing it did not have. The edge G7
+-- forbids is the other one, convert_app reaching convert_auth.
+do $$
+begin
+  execute format('grant convert_auth to %I', current_user);
+end
+$$;
+
 -- Table privileges are NOT granted here, and there is no ALTER DEFAULT PRIVILEGES for
 -- tables. Both used to exist, on the reasoning that a new tenant table should not be
 -- silently unreadable by the application. ADR 0050 reversed it: a blanket grant makes

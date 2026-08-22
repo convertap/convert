@@ -113,9 +113,12 @@ the application's role has no privilege on it. The mechanism fits the gates as t
 which is why it needs no weakening of G7's definer check. And the column list being part of the
 decision means a future column is private until somebody widens a function on purpose.
 
-**Negative / cost.** A third role and a third connection string to provision in every environment,
-including both Railway environments where the second one is still an outstanding human step from ADR
-0042. Logic moves into the database, which nothing else in this system does, so there is now a place
+**Negative / cost.** A third role in every environment. This paragraph originally said "and a
+third connection string to provision", including in both Railway environments where the second
+one is still an outstanding human step from ADR 0042. **That cost does not exist**, found while
+building it on 22 August: a role owns functions without ever connecting, and nothing connects as
+`convert_auth`, so it is `NOLOGIN` with no password and no connection string. One fewer
+credential to provision and one fewer to leak. Logic moves into the database, which nothing else in this system does, so there is now a place
 where behaviour lives that the TypeScript layers cannot see. Every new identity read path is a
 migration rather than a query, which is friction by design and will feel like friction. Per-role
 policies make the canonical-policy assertion more complex, and a more complex assertion is a

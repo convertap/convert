@@ -15,6 +15,8 @@ import {
   TENANT_TABLE,
   VIEW_OPTION,
   canonicalPolicySql,
+  AUTH_ROLE,
+  AUTH_READER_TABLES,
 } from '../src/db/access';
 import type { TableAccess } from '../src/db/access';
 import * as schema from '../src/db/schema';
@@ -957,21 +959,95 @@ const main = async () => {
 
       const mine = policies.rows.filter((p) => p.tablename === name);
       const permissive = mine.filter((p) => p.permissive);
-      if (permissive.length === 0) {
-        failures.push(`${label}: row-level security is enabled but no permissive policy exists`);
+
+      // Per role, not per table (ADR 0054). Permissive policies combine with OR, so a second one
+      // can only widen what is visible - but only among the policies that *apply to the current
+      // role*. A policy declared TO convert_auth never enters the OR when convert_app is asking, so
+      // counting per table would refuse the identity read path while proving nothing extra. What
+      // still has to hold is one permissive policy per table and role.
+      //
+      // A policy granted to PUBLIC is counted against every role deliberately: PUBLIC applies to
+      // whoever asks, including roles that do not exist yet.
+      const appliesTo = (p: (typeof permissive)[number], role: string) =>
+        p.roles.includes(role) || p.roles.includes('PUBLIC');
+
+      const forApp = permissive.filter((p) => appliesTo(p, APP_ROLE));
+      const forAuth = permissive.filter((p) => appliesTo(p, AUTH_ROLE));
+      const orphans = permissive.filter(
+        (p) => !appliesTo(p, APP_ROLE) && !appliesTo(p, AUTH_ROLE),
+      );
+
+      for (const p of orphans) {
+        failures.push(
+          `${label}: permissive policy ${p.polname} applies to [${[...p.roles].sort().join(', ')}], ` +
+            `which is neither ${APP_ROLE} nor ${AUTH_ROLE}. A policy for a role nothing connects ` +
+            'as is either dead or a boundary nobody declared',
+        );
+      }
+
+      if (forApp.length === 0) {
+        failures.push(
+          `${label}: row-level security is enabled but no permissive policy applies to ${APP_ROLE}`,
+        );
         continue;
       }
-      if (permissive.length > 1) {
+      if (forApp.length > 1) {
         failures.push(
-          `${label}: has ${permissive.length} permissive policies (${permissive
+          `${label}: has ${forApp.length} permissive policies applying to ${APP_ROLE} (${forApp
             .map((p) => p.polname)
-            .join(', ')}). Permissive policies combine with OR, so a second one can only widen ` +
-            'what is visible. Restrictive policies are fine; a second permissive one is not',
+            .join(', ')}). They combine with OR, so a second one can only widen what the ` +
+            'application sees. Restrictive policies are fine; a second permissive one is not',
         );
         continue;
       }
 
-      const policy = permissive[0]!;
+      // The auth_reader half (ADR 0054). Expected exactly on the tables the identity functions
+      // read, and refused everywhere else: a permissive policy for convert_auth on a table no
+      // function reads is a role seeing rows for no stated reason.
+      const wantsAuthReader = AUTH_READER_TABLES.has(name);
+      if (wantsAuthReader && forAuth.length !== 1) {
+        failures.push(
+          `${label}: ${forAuth.length} permissive policies apply to ${AUTH_ROLE}, expected exactly ` +
+            `one. The identity lookup functions run as that role and are subject to this table's ` +
+            'policies like anything else, so without it sign-in cannot find the account it was ' +
+            'asked for (ADR 0054)',
+        );
+      }
+      if (!wantsAuthReader && forAuth.length > 0) {
+        failures.push(
+          `${label}: ${forAuth.length} permissive policies apply to ${AUTH_ROLE} (${forAuth
+            .map((p) => p.polname)
+            .join(', ')}), but no function in AUTH_FUNCTIONS reads this table. Either the function ` +
+            'is missing from the registry or the policy should not exist',
+        );
+      }
+      if (wantsAuthReader && forAuth.length === 1) {
+        const reader = forAuth[0]!;
+        const readerRoles = [...reader.roles].sort();
+        if (readerRoles.length !== 1 || readerRoles[0] !== AUTH_ROLE) {
+          failures.push(
+            `${label}: policy ${reader.polname} applies to [${readerRoles.join(', ')}] rather than ` +
+              `exactly ${AUTH_ROLE}`,
+          );
+        }
+        if (reader.cmd !== 'r') {
+          failures.push(
+            `${label}: policy ${reader.polname} is not FOR SELECT. The lookup role reads; it has no ` +
+              'reason to write, and a wider command on a using(true) policy is a write nobody scoped',
+          );
+        }
+        if (reader.qual !== 'true') {
+          failures.push(
+            `${label}: policy ${reader.polname} is not the canonical auth_reader expression.
+` +
+              `      expected: true
+` +
+              `      actual:   ${reader.qual}`,
+          );
+        }
+      }
+
+      const policy = forApp[0]!;
       if (policy.cmd !== '*') {
         failures.push(
           `${label}: policy ${policy.polname} is not FOR ALL, so writes are governed by ` +
@@ -1118,6 +1194,64 @@ const main = async () => {
           `${label}: is classified role-grants and has row-level security enabled. Grants control ` +
             'operations, never row visibility - a table needing row scoping cannot be role-grants',
         );
+      }
+    }
+
+    // Who else holds anything, which the check above cannot see.
+    //
+    // Everything before this asks `has_table_privilege(convert_app, ...)` and whether PUBLIC holds
+    // something. Both are blind to a third role: `grant select on contact to some_role` passed every
+    // subcheck. That is not hypothetical - the identity read path needs exactly such a grant, and
+    // adding it left the gate reporting "3 tables hold exactly their declared privileges" while one
+    // of them had an undeclared grantee.
+    //
+    // So the grantee set is asserted whole: the owner, the application role with the privileges the
+    // registry declares, and `convert_auth` with SELECT on the tables AUTH_FUNCTIONS reads. Anything
+    // else is a boundary nobody wrote down.
+    const acl = await db.execute<{
+      relname: string;
+      grantee: string;
+      privilege: string;
+    }>(sql`
+      select c.relname,
+             case when acl.grantee = 0 then 'PUBLIC' else coalesce(r.rolname, '?') end as grantee,
+             acl.privilege_type as privilege
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+      cross join lateral aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) as acl
+      left join pg_roles r on r.oid = acl.grantee
+      where n.nspname = 'public'
+        and c.relkind in ('r', 'p', 'v', 'm')
+        and acl.grantee <> c.relowner
+        and c.relname not in ('rls_probe', 'rls_expr_probe_workspace_rls', 'rls_expr_probe_user_rls')
+    `);
+
+    for (const table of tables) {
+      const access = entryFor(table);
+      if (!access) continue;
+      const name = table.relname;
+      const label = table.isPartition ? `${name} (partition of ${table.root})` : name;
+
+      const allowed = new Map<string, readonly string[]>([
+        [APP_ROLE, [...access.appPrivileges]],
+      ]);
+      if (AUTH_READER_TABLES.has(name)) allowed.set(AUTH_ROLE, ['SELECT']);
+
+      for (const row of acl.rows.filter((r) => r.relname === name)) {
+        const permitted = allowed.get(row.grantee);
+        if (!permitted) {
+          grantFailures.push(
+            `${label}: ${row.grantee} holds ${row.privilege}, and the registry names no such ` +
+              'grantee. A grant to a role TABLE_ACCESS does not mention is access nobody declared',
+          );
+          continue;
+        }
+        if (!permitted.includes(row.privilege)) {
+          grantFailures.push(
+            `${label}: ${row.grantee} holds ${row.privilege}, beyond the ` +
+              `[${permitted.join(', ')}] the registry allows it`,
+          );
+        }
       }
     }
   }
