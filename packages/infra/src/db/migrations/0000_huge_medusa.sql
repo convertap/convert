@@ -104,8 +104,11 @@ grant select, insert, update on "workspace_member" to convert_app;--> statement-
 -- row. convert_app holds EXECUTE and no privilege that would let it read the table this way.
 --
 -- Three details are load-bearing:
---   * `security definer` with `set search_path = ''`, so an unqualified name inside cannot resolve
---     through the caller's search path. Every name here is schema-qualified.
+--   * `security definer` with `set search_path = ''`, which removes the caller's ordinary schemas.
+--     It is not the whole guarantee: Postgres still searches an existing temporary schema for
+--     relation names, so what actually makes these safe is that every name inside is
+--     schema-qualified, and that bootstrap revokes TEMP from PUBLIC. Review demonstrated the
+--     difference by shadowing an unqualified name from a temp schema.
 --   * ownership transferred to convert_auth. Left owned by the migration owner, which bypasses RLS
 --     (ADR 0052), each function would be a hole and G7 would refuse it.
 --   * EXECUTE revoked from PUBLIC before it is granted. EXECUTE defaults to PUBLIC on a new

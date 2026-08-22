@@ -317,10 +317,11 @@ export const TABLE_ACCESS_BLOCKERS = {
  * exists to prevent, and no gate can see that from the outside. G7 compares each function's declared
  * return columns against this list, so widening one is a change to this file that a reviewer sees.
  *
- * `search_path` is empty on every one of them and every name inside is schema-qualified. The
- * application can create objects in `public`, and a definer routine resolving an unqualified name
- * through the caller's search path is how review shadowed a table called `workspace` with a
- * temporary one.
+ * `search_path` is empty on every one of them and every name inside is schema-qualified. Both halves
+ * matter: an empty `search_path` removes the caller's ordinary schemas but Postgres still searches an
+ * existing temporary schema for relation names, which is how review shadowed a table called
+ * `workspace` with a temporary one. Qualifying every name is what closes it, and bootstrap revoking
+ * TEMP from PUBLIC is the belt to that brace.
  */
 export const AUTH_FUNCTIONS = {
   auth_find_user_by_phone: {
