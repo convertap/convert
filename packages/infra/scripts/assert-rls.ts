@@ -420,25 +420,33 @@ const main = async () => {
       outgoing.set(edge.member, list);
     }
 
-    // Breadth-first, so the path reported is the shortest one and each role is visited once.
+    // Breadth-first over (role, was ADMIN seen on the way here), which is two states per role and
+    // not one. The first version keyed `seen` by role alone, and review broke it with a convergent
+    // graph: an inert direct edge to the table owner discovered that role first, so the later
+    // ADMIN-bearing path through an intermediate was skipped before it could mark it. The gate
+    // printed 11 of 11 while the application became the owner by granting itself SET ROLE. A role
+    // is therefore revisited exactly once, when its state improves from no-ADMIN to ADMIN.
     const cameFrom = new Map<string, string>();
+    const bestKnown = new Map<string, boolean>([[role.current_user, false]]);
     const queue: { role: string; admin: boolean }[] = [
       { role: role.current_user, admin: false },
     ];
-    const seen = new Set<string>([role.current_user]);
     while (queue.length > 0) {
       const here = queue.shift()!;
       for (const next of outgoing.get(here.role) ?? []) {
         const adminOnPath = here.admin || next.admin;
-        if (seen.has(next.granted)) continue;
-        seen.add(next.granted);
+        const known = bestKnown.get(next.granted);
+        // Skip only when this path teaches nothing: the role is known already and either it is
+        // already known to be ADMIN-reachable, or this path does not carry ADMIN either.
+        if (known !== undefined && (known || !adminOnPath)) continue;
+        bestKnown.set(next.granted, adminOnPath);
         cameFrom.set(next.granted, here.role);
         if (adminOnPath) adminReachable.add(next.granted);
         queue.push({ role: next.granted, admin: adminOnPath });
       }
     }
     const pathTo = (target: string): string | undefined => {
-      if (!seen.has(target) || target === role.current_user) return undefined;
+      if (!bestKnown.has(target) || target === role.current_user) return undefined;
       const hops = [target];
       let cursor = target;
       while (cameFrom.has(cursor)) {
@@ -1544,7 +1552,40 @@ const main = async () => {
   // safe because its owner did not *bypass* policies.
   const policedOwners = new Set(policed.map((table) => table.owner));
 
+  // Effective ownership, not the same role OID. Review granted a policed table's owner to a second
+  // role WITH INHERIT TRUE, owned the definer routine with that second role, and ran
+  // `alter table ... disable row level security` from inside it while this subcheck reported every
+  // routine safe. A routine executes with its owner's privileges, and those privileges include
+  // whatever the owner inherits.
+  const definerOwners = [...new Set(definers.rows.map((r) => r.owner))];
+  const inheritsOwner = new Map<string, string>();
+  if (definerOwners.length > 0 && policedOwners.size > 0) {
+    const inherited = await db.execute<{ routine_owner: string; table_owner: string }>(sql`
+      select r.rolname as routine_owner, o.rolname as table_owner
+      from pg_roles r
+      cross join pg_roles o
+      where r.rolname = any(${sql.raw(
+        `array[${definerOwners.map((o) => `'${o.replace(/'/g, "''")}'`).join(', ')}]::name[]`,
+      )})
+        and o.rolname = any(${sql.raw(
+          `array[${[...policedOwners].map((o) => `'${o.replace(/'/g, "''")}'`).join(', ')}]::name[]`,
+        )})
+        and r.rolname <> o.rolname
+        and pg_has_role(r.oid, o.oid, 'USAGE')
+    `);
+    for (const row of inherited.rows) inheritsOwner.set(row.routine_owner, row.table_owner);
+  }
+
   for (const routine of definers.rows) {
+    const inherited = inheritsOwner.get(routine.owner);
+    if (inherited !== undefined && !routine.canBypass) {
+      definerFailures.push(
+        `${routine.routine}: is SECURITY DEFINER and owned by ${routine.owner}, which inherits ` +
+          `${inherited}, the owner of a policed table. A routine runs with its owner's privileges, ` +
+          'and those include inherited ones, so this delegates owner-only DDL without the routine ' +
+          'owner appearing to own anything',
+      );
+    }
     if (policedOwners.has(routine.owner) && !routine.canBypass) {
       definerFailures.push(
         `${routine.routine}: is SECURITY DEFINER and owned by ${routine.owner}, which owns a table ` +
@@ -1929,6 +1970,108 @@ const main = async () => {
     verdict:
       'a cross-tenant read returned nothing, an empty context returned nothing, and the owner ' +
       'saw both rows',
+  });
+
+  // ---- 12. the schema boundary this whole file assumes. ---------------------------------------
+  //
+  // Every relation, policy, dependency and ACL query above filters `nspname = 'public'`. That was an
+  // unstated assumption until review exploited it: a plain owner-context view in another schema over
+  // `public."user"`, granted to the application, returned every account while the gate reported
+  // `0 view(s)` and 11 of 11 real. The inventory was not wrong about what it inventoried; it was
+  // silent about everywhere else.
+  //
+  // Widening eight queries to every schema is the larger fix and the wrong one for this system,
+  // which has exactly one application schema by design. So the boundary is asserted instead: outside
+  // the system schemas there may be `public`, which is inventoried, and `drizzle`, which holds the
+  // migration journal and which the application cannot reach. Anything else fails, because a
+  // relation there is unpoliced by construction rather than by mistake.
+  //
+  // If a second application schema is ever wanted, this subcheck is the thing that must change, and
+  // changing it means schema-qualifying the identities in the registry and every query above.
+  const boundaryFailures: string[] = [];
+  const schemas = await db.execute<{
+    nspname: string;
+    owner: string;
+    app_usage: boolean;
+    app_create: boolean;
+  }>(sql`
+    select n.nspname,
+           pg_get_userbyid(n.nspowner) as owner,
+           has_schema_privilege(${APP_ROLE}, n.oid, 'USAGE') as app_usage,
+           has_schema_privilege(${APP_ROLE}, n.oid, 'CREATE') as app_create
+    from pg_namespace n
+    where n.nspname <> 'information_schema'
+      and n.nspname not like 'pg\\_%'
+  `);
+
+  for (const schema of schemas.rows) {
+    if (schema.nspname === 'public') {
+      if (schema.app_create) {
+        boundaryFailures.push(
+          `public: ${APP_ROLE} holds CREATE, so it can add a relation that never appears in ` +
+            'TABLE_ACCESS and never acquires a policy. bootstrap.sql revokes this; the revocation ' +
+            'is asserted here rather than assumed to have run',
+        );
+      }
+      continue;
+    }
+    if (schema.nspname === 'drizzle') {
+      // The migration journal. Allowed because the application cannot reach it, which is the part
+      // worth checking rather than the part worth assuming.
+      if (schema.app_usage || schema.app_create) {
+        boundaryFailures.push(
+          `drizzle: ${APP_ROLE} holds ${schema.app_create ? 'CREATE' : 'USAGE'} on the migration ` +
+            'journal schema. Nothing in the application reads it, and a relation it can reach ' +
+            'there is outside every check in this file',
+        );
+      }
+      continue;
+    }
+    boundaryFailures.push(
+      `${schema.nspname}: is a schema outside public, owned by ${schema.owner}. Every relation, ` +
+        'policy and privilege check in this gate reads public alone, so a table, view or ' +
+        'materialized view here carries no policy anyone verified. Review read every account ' +
+        'through exactly this shape. Drop it, or schema-qualify the registry and widen every ' +
+        'query, which is a change to ADR 0050',
+    );
+  }
+
+  // Two database-level privileges the same reasoning applies to. TEMP is load-bearing: a temporary
+  // schema sits ahead of public in the effective search path, which is how an unqualified name in a
+  // definer routine gets shadowed. bootstrap.sql revokes it from PUBLIC, and review showed that
+  // granting it back left the gate green.
+  const dbPrivileges = await db.execute<{
+    app_temp: boolean;
+    public_temp: boolean;
+    app_createdb: boolean;
+  }>(sql`
+    select has_database_privilege(${APP_ROLE}, current_database(), 'TEMP') as app_temp,
+           has_database_privilege('public', current_database(), 'TEMP') as public_temp,
+           (select rolcreatedb from pg_roles where rolname = ${APP_ROLE}) as app_createdb
+  `);
+  const dbPriv = dbPrivileges.rows[0];
+  if (dbPriv?.public_temp || dbPriv?.app_temp) {
+    boundaryFailures.push(
+      `TEMP on the database is granted to ${dbPriv.public_temp ? 'PUBLIC' : APP_ROLE}. A temporary ` +
+        'schema is searched ahead of public, so an unqualified name inside a SECURITY DEFINER ' +
+        'routine can resolve to a temp relation the application created. Every approved routine ' +
+        'qualifies its names, and removing the capability is the belt to that brace',
+    );
+  }
+  if (dbPriv?.app_createdb) {
+    boundaryFailures.push(
+      `${APP_ROLE} holds CREATEDB. It confers nothing over objects in this database, and it is ` +
+        'still authority the application has no use for',
+    );
+  }
+
+  subchecks.push({
+    name: 'schema boundary',
+    failures: boundaryFailures,
+    status: 'real',
+    verdict:
+      `${schemas.rows.length} non-system schema(s) present, none reachable by ${APP_ROLE} except ` +
+      'public, which is the one this gate inventories; TEMP withheld and no CREATE on public',
   });
 
   // ---- report ------------------------------------------------------------------------------
