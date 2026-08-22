@@ -310,27 +310,41 @@ const main = async () => {
     }
   }
 
-  // Attributes and privileges both reach a role through membership, so an inherited path from the
-  // application role to the owner hands the application the bypass ADR 0052 grants the owner. This
-  // is the case that would otherwise pass every other check.
-  if (role && ownerRole) {
-    const membership = await db.execute<{ path: string }>(sql`
-      with recursive climb(oid, path) as (
-        select r.oid, r.rolname::text
+  // Membership is a capability, not just a privilege path: a member can SET ROLE to any role it
+  // reaches, whatever INHERIT says, and thereby take on that role's attributes. So the question is
+  // not "is it a member of the owner" - the first version of this check asked exactly that, and
+  // review escaped it in one line with `create role rls_escape bypassrls; grant rls_escape to
+  // convert_app`. The question is whether the application role can reach *any* role that bypasses.
+  if (role) {
+    const reachable = await db.execute<{
+      rolname: string;
+      rolsuper: boolean;
+      rolbypassrls: boolean;
+      path: string;
+    }>(sql`
+      with recursive climb(oid, path, depth) as (
+        select r.oid, r.rolname::text, 0
         from pg_roles r
         where r.rolname = ${role.current_user}
         union all
-        select parent.oid, climb.path || ' -> ' || parent.rolname
+        select parent.oid, climb.path || ' -> ' || parent.rolname, climb.depth + 1
         from climb
         join pg_auth_members m on m.member = climb.oid
         join pg_roles parent on parent.oid = m.roleid
+        -- pg_auth_members cannot hold a cycle, but depth is bounded anyway rather than trusting it.
+        where climb.depth < 16
       )
-      select path from climb where oid = (select oid from pg_roles where rolname = ${ownerRole.current_user})
+      select r.rolname, r.rolsuper, r.rolbypassrls, climb.path
+      from climb
+      join pg_roles r on r.oid = climb.oid
+      where climb.depth > 0 and (r.rolsuper or r.rolbypassrls)
     `);
-    for (const row of membership.rows) {
+    for (const row of reachable.rows) {
+      const why = row.rolsuper ? 'is a SUPERUSER' : 'holds BYPASSRLS';
       roleFailures.push(
-        `${role.current_user} is a member of the migration owner (${row.path}), so it inherits ` +
-          'that role and with it the ability to bypass every policy',
+        `${role.current_user} can reach ${row.rolname}, which ${why} (${row.path}). A member can ` +
+          'SET ROLE to anything it reaches regardless of INHERIT, so the application can take on ' +
+          'that role and every policy stops applying to it',
       );
     }
   }
@@ -436,8 +450,8 @@ const main = async () => {
   `);
 
   const foreignKeys = await db.execute<ForeignKey>(sql`
-    select src.relname as child,
-           tgt.relname as parent,
+    select coalesce(srcroot.relname, src.relname) as child,
+           coalesce(tgtroot.relname, tgt.relname) as parent,
            (select array_agg(a.attname order by a.attnum)::text[]
               from pg_attribute a
              where a.attrelid = src.oid and a.attnum = any (con.conkey)) as columns,
@@ -455,6 +469,11 @@ const main = async () => {
     join pg_class src on src.oid = con.conrelid
     join pg_class tgt on tgt.oid = con.confrelid
     join pg_namespace n on n.oid = src.relnamespace
+    -- Both ends are normalised to their partition roots. A foreign key may reference a partition
+    -- directly, and a partition carries no registry entry of its own, so comparing raw names let a
+    -- role-grants table reference a partition of the tenant table and escape both rules below.
+    left join pg_class srcroot on srcroot.oid = pg_partition_root(src.oid)
+    left join pg_class tgtroot on tgtroot.oid = pg_partition_root(tgt.oid)
     where con.contype = 'f' and n.nspname = 'public'
   `);
 
@@ -524,28 +543,52 @@ const main = async () => {
   // because the rows were computed at refresh time. So it must not be able to read row-scoped data,
   // and the dependency graph answers that rather than the definition looking harmless.
   if (views.some((v) => v.relkind === 'm')) {
-    const reads = await db.execute<{ viewname: string; base: string }>(sql`
-      select distinct dependent.relname as viewname, base.relname as base
-      from pg_depend d
-      join pg_rewrite r on r.oid = d.objid
-      join pg_class dependent on dependent.oid = r.ev_class
-      join pg_class base on base.oid = d.refobjid
-      join pg_namespace n on n.oid = dependent.relnamespace
-      where d.classid = 'pg_rewrite'::regclass
-        and d.refclassid = 'pg_class'::regclass
-        and dependent.oid <> base.oid
-        and dependent.relkind = 'm'
-        and n.nspname = 'public'
+    // Transitive, through any chain of views. The first version joined pg_rewrite once, so a
+    // materialized view over a *view* over a tenant table passed - review found it, and the
+    // intermediate view being correctly marked security_invoker made no difference, because the
+    // matview stores rows the owner computed. The path is reported so the chain is readable.
+    const reads = await db.execute<{
+      viewname: string;
+      base: string;
+      root: string;
+      path: string;
+    }>(sql`
+      with recursive closure(top, rel, path, depth) as (
+        select c.oid, c.oid, c.relname::text, 0
+        from pg_class c
+        join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = 'public' and c.relkind = 'm'
+        union all
+        select closure.top, base.oid, closure.path || ' -> ' || base.relname, closure.depth + 1
+        from closure
+        join pg_rewrite r on r.ev_class = closure.rel
+        join pg_depend d
+          on d.objid = r.oid
+         and d.classid = 'pg_rewrite'::regclass
+         and d.refclassid = 'pg_class'::regclass
+        join pg_class base on base.oid = d.refobjid
+        where base.oid <> closure.rel and closure.depth < 32
+      )
+      select top_rel.relname as viewname,
+             base.relname as base,
+             coalesce(rt.relname, base.relname) as root,
+             closure.path
+      from closure
+      join pg_class top_rel on top_rel.oid = closure.top
+      join pg_class base on base.oid = closure.rel
+      left join pg_class rt on rt.oid = pg_partition_root(base.oid)
+      where closure.depth > 0 and base.relkind in ('r', 'p')
     `);
     for (const row of reads.rows) {
-      const baseAccess = REGISTRY[row.base];
+      const baseAccess = REGISTRY[row.root];
       if (baseAccess && isRlsAccess(baseAccess)) {
         catalogueFailures.push(
           `${row.viewname}: is a materialized view reading ${row.base}, which is ` +
-            `${baseAccess.kind}. Row-level security is never applied when reading a materialized ` +
-            'view, and no option changes that, so its contents are readable in full by anyone ' +
-            'holding SELECT on it. A real table maintained by the worker, with its own policy, is ' +
-            'the replacement (ADR 0051)',
+            `${baseAccess.kind} (${row.path}). Row-level security is never applied when reading a ` +
+            'materialized view, and no option changes that, so its contents are readable in full ' +
+            'by anyone holding SELECT on it - an intermediate view being security_invoker does not ' +
+            'help, because the rows were computed by the owner at refresh time. A real table ' +
+            'maintained by the worker, with its own policy, is the replacement (ADR 0051)',
         );
       }
     }
@@ -576,7 +619,9 @@ const main = async () => {
     real: relations.rows.length > 0,
     verdict:
       relations.rows.length > 0
-        ? `${relations.rows.length} relation(s) in public, all of them tables, all classified`
+        ? `${relations.rows.length} relation(s) in public classified (${tables.length} table(s), ` +
+          `${views.filter((v) => v.relkind === 'v').length} view(s), ` +
+          `${views.filter((v) => v.relkind === 'm').length} materialized)`
         : 'there is nothing in the public schema yet, so neither direction had anything to iterate',
   });
 
@@ -594,6 +639,8 @@ const main = async () => {
   for (const fk of foreignKeys.rows) {
     if (fk.parent !== TENANT_TABLE) continue;
     if (fk.parentColumns.length !== 1 || fk.parentColumns[0] !== TENANT_KEY) continue;
+    // fk.parent is already the partition root, so a reference to workspace_2026(id) arrives here as
+    // a reference to workspace(id) and is held to the same rule.
     if (!fk.notNull || !fk.isUuid || fk.columns.length !== 1) continue;
     const access = REGISTRY[fk.child];
     if (!access) continue;
@@ -1031,6 +1078,11 @@ const main = async () => {
   });
 
   // ---- report ------------------------------------------------------------------------------
+
+  // Deduplicated: a partitioned table yields one foreign-key row per partition and the view closure
+  // yields one row per path, so the same sentence can arrive several times. Repeating it buries the
+  // other failures.
+  for (const check of subchecks) check.failures = [...new Set(check.failures)];
 
   const failed = subchecks.filter((check) => check.failures.length > 0);
   if (failed.length > 0) {
