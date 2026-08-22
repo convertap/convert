@@ -2,10 +2,9 @@ name: CI
 
 on:
   push:
-    # develop is here because deploy-test keys on it (ADR 0024). Without it the
-    # workflow never fires for develop, so the deploy job's condition is
-    # unreachable and the test environment silently never updates.
-    branches: [main, develop]
+    # All promotion branches run the same gates. Only testing and staging have
+    # deploy jobs; develop is integration-only and main is the production branch.
+    branches: [develop, testing, staging, main]
   pull_request:
 
 permissions:
@@ -17,7 +16,9 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Stale PR checks are disposable. A branch push may already have handed a
+  # build to Railway, so cancelling it can leave an unverified release running.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Not a secret: a project id is useless without a token (ADR 0024).
@@ -28,6 +29,9 @@ jobs:
     name: G1-G2 boundaries and ADR discipline, G14-G15 secrets and mirror
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: read
     steps:
       - uses: actions/checkout@v7
         with:
@@ -36,6 +40,87 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
+
+      # ADR 0049 - long-lived branches advance in one direction only. Branch
+      # protection requires this job, so a PR cannot skip an environment.
+      - name: Validate promotion route
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_BRANCH: ${{ github.base_ref }}
+          HEAD_BRANCH: ${{ github.head_ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          case "$BASE_BRANCH" in
+            testing) expected=develop ;;
+            staging) expected=testing ;;
+            main) expected=staging ;;
+            develop)
+              case "$HEAD_BRANCH" in
+                testing|staging|main)
+                  echo "::error::Long-lived branches cannot be promoted backward into develop."
+                  exit 1
+                  ;;
+              esac
+              exit 0
+              ;;
+            *)
+              echo "::error::Unsupported pull request target: $BASE_BRANCH"
+              exit 1
+              ;;
+          esac
+
+          if [ "$HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" ]; then
+            echo "::error::Promotion pull requests must come from $GITHUB_REPOSITORY."
+            exit 1
+          fi
+
+          if [ "$HEAD_BRANCH" != "$expected" ]; then
+            echo "::error::Pull requests to $BASE_BRANCH must come from $expected, not $HEAD_BRANCH."
+            exit 1
+          fi
+
+      # A branch name proves where a candidate came from; these check runs prove
+      # that candidate actually deployed and served in the preceding environment.
+      - name: Validate source environment
+        if: >-
+          github.event_name == 'pull_request'
+          && (github.base_ref == 'staging' || github.base_ref == 'main')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+          REQUIRED_ENVIRONMENT: ${{ github.base_ref == 'staging' && 'test' || 'staging' }}
+        run: |
+          for service in api web; do
+            check_name="Deploy $service to $REQUIRED_ENVIRONMENT"
+            response=$(curl --fail-with-body --silent --show-error --get \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              --data-urlencode "check_name=$check_name" \
+              --data-urlencode "filter=latest" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$SOURCE_SHA/check-runs")
+            conclusion=$(jq -r '.check_runs[0].conclusion // "missing"' <<< "$response")
+            if [ "$conclusion" != "success" ]; then
+              echo "::error::$check_name is $conclusion for $SOURCE_SHA; deploy and prove the source environment before promotion."
+              exit 1
+            fi
+          done
+
+      # Squash or rebase promotion rewrites the commit and leaves the environment
+      # branches permanently divergent. Deployment branches must receive a merge
+      # commit; this post-merge check blocks deployment if the wrong button was used.
+      - name: Validate promotion merge
+        if: >-
+          github.event_name == 'push'
+          && (github.ref == 'refs/heads/testing'
+          || github.ref == 'refs/heads/staging'
+          || github.ref == 'refs/heads/main')
+        run: |
+          parent_count=$(git rev-list --parents -n 1 HEAD | awk '{ print NF - 1 }')
+          if [ "$parent_count" -ne 2 ]; then
+            echo "::error::$GITHUB_REF_NAME must advance with a merge commit from its promotion PR."
+            exit 1
+          fi
 
       # G1 - layer boundaries. No dependencies, runs in under a second.
       - name: Check layer boundaries
@@ -203,6 +288,57 @@ jobs:
           DATABASE_URL_APP: postgres://convert_app:ci-throwaway@localhost:5432/convert_test
         run: pnpm --filter @convert/infra assert:rls
 
+      # ADR 0052 requires the migration owner to be able to bypass row-level security, because a
+      # backfill against a FORCE'd table otherwise reports success having changed nothing. The step
+      # above connects as postgres, a superuser, so that assertion is satisfied by construction
+      # there and could never go red - which is the ADR 0048 trap: a check named as real that cannot
+      # fail where it runs. This step points DATABASE_URL at a deliberately restricted role and
+      # requires the gate to reject it, so the assertion is exercised rather than assumed.
+      - name: G7 owner must not be able to be restricted
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -o pipefail
+          # drop owned by first: a leftover role holding schema privileges cannot be dropped, and
+          # the first version of this step opened with a bare `drop role if exists` that failed on
+          # a reused database with no way to recover.
+          psql -h localhost -U postgres -d convert_test -v ON_ERROR_STOP=1 -c \
+            "do \$\$ begin
+               if exists (select 1 from pg_roles where rolname = 'ci_restricted_owner') then
+                 execute 'drop owned by ci_restricted_owner';
+                 execute 'drop role ci_restricted_owner';
+               end if;
+             end \$\$;
+             create role ci_restricted_owner login password 'ci-throwaway' nosuperuser nobypassrls;
+             grant all on schema public to ci_restricted_owner;"
+
+          # Assert the CAUSE, not the exit status. Requiring merely "non-zero" made this step pass
+          # on any crash - a wrong password, a TypeScript error - and, worse, it passed even with
+          # the ADR 0052 assertion deleted, because the isolation probe cannot insert its own
+          # fixture rows under a non-bypassing owner either. assert:rls exits 3 for a role
+          # precondition failure specifically, so that is what gets checked.
+          set +e
+          DATABASE_URL=postgres://ci_restricted_owner:ci-throwaway@localhost:5432/convert_test \
+          DATABASE_URL_APP=postgres://convert_app:ci-throwaway@localhost:5432/convert_test \
+            pnpm --filter @convert/infra assert:rls > restricted.log 2>&1
+          code=$?
+          set -e
+          cat restricted.log
+
+          if [ "$code" -ne 3 ]; then
+            echo "::error::expected assert:rls to exit 3 for a role precondition failure, got $code. Exit 0 means it accepted an owner that cannot bypass RLS; any other code means it failed for an unrelated reason and this step proved nothing."
+            exit 1
+          fi
+          if ! grep -q "can neither bypass RLS nor is a superuser" restricted.log; then
+            echo "::error::assert:rls exited 3 without naming the owner's attributes. ADR 0052 requires that specific failure."
+            exit 1
+          fi
+          echo "assert:rls rejected the restricted owner by name and with exit 3, as ADR 0052 requires"
+
+          rm -f restricted.log
+          psql -h localhost -U postgres -d convert_test -v ON_ERROR_STOP=1 -c \
+            "drop owned by ci_restricted_owner; drop role ci_restricted_owner;"
+
       # G7 - the column conventions of ADR 0046, read from the catalogue rather than from a
       # reviewer's memory: money as integer pesewas in bigint and never numeric or a float,
       # rates as integer basis points, every timestamp timestamptz, created_at everywhere,
@@ -253,16 +389,17 @@ jobs:
 
   # ---------------------------------------------------------------- deployment
   #
-  # Nothing deploys because a commit appeared on a branch: Railway's deployment
-  # triggers are deleted, and these jobs are the only path (ADR 0024). `needs`
-  # is the enforcement, so a deploy cannot start until every gate has passed.
+  # Railway's own deployment triggers are deleted, and these jobs are the only
+  # deployment path (ADR 0024, ADR 0049). `needs` is the enforcement, so a
+  # deploy cannot start until every gate has passed. The protected branch flow is
+  # develop -> testing -> staging -> main. Develop and main never deploy here.
   #
   # Each job has its own switch, DEPLOY_TEST and DEPLOY_STAGING, so one
   # environment can be turned off without touching the other. Both are off
   # until the variable is "true" and that environment holds a token.
   # Merging a deploy job that cannot authenticate would put a permanent red
-  # job on main, and a red main everyone learns to ignore is worse than no
-  # deploy job at all.
+  # job on its deployment branch, and a red branch everyone learns to ignore
+  # is worse than no deploy job at all.
   #
   # The credential is passed as RAILWAY_API_TOKEN, not RAILWAY_TOKEN. The CLI
   # reads the two as different token types: RAILWAY_TOKEN must be a project
@@ -290,7 +427,7 @@ jobs:
     needs: [guardrails, quality, database, performance]
     if: >-
       github.event_name == 'push'
-      && github.ref == 'refs/heads/develop'
+      && github.ref == 'refs/heads/testing'
       && vars.DEPLOY_TEST == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -347,7 +484,7 @@ jobs:
     needs: [guardrails, quality, database, performance]
     if: >-
       github.event_name == 'push'
-      && github.ref == 'refs/heads/main'
+      && github.ref == 'refs/heads/staging'
       && vars.DEPLOY_STAGING == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20

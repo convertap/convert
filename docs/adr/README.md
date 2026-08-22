@@ -50,6 +50,10 @@ One file per decision. Numbered, immutable once accepted, superseded rather than
 | [0046](./0046-column-conventions-for-money-time-and-history.md) | Column conventions for money, time and history | Accepted |
 | [0047](./0047-sessions-are-stored-revocable-and-identity-only.md) | Sessions are stored, revocable, and identity-only | Accepted |
 | [0048](./0048-an-enforcement-section-names-what-exists-today.md) | An Enforcement section names what exists today | Accepted |
+| [0049](./0049-promote-through-develop-testing-staging-and-main.md) | Promote through develop, testing, staging and main | Accepted |
+| [0050](./0050-one-table-access-registry-classified-by-what-the-gate-demands.md) | One table access registry, classified by what the gate demands | Accepted |
+| [0051](./0051-views-run-with-the-invokers-rights.md) | Views run with the invoker's rights, and a materialized view may not read tenant data | Accepted |
+| [0052](./0052-the-migration-owner-bypasses-row-level-security.md) | The migration owner bypasses row-level security, deliberately | Accepted |
 
 Statuses: **Proposed** (written, not yet ratified) · **Accepted** (in force) · **Superseded** (replaced, kept for the record) · **Rejected** (considered and declined, kept so it is not re-litigated).
 

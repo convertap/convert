@@ -24,8 +24,18 @@ import {
  * is the one that makes the tenancy boundary real.
  *
  * When they land, each tenant table must arrive with, in the same migration:
+ *   - an entry in TABLE_ACCESS in ./access.ts saying how it is protected (ADR 0050). A declared
+ *     table missing from that registry fails G7, which is the point: forgetting to protect a table
+ *     and forgetting to classify it are now the same mistake
  *   - workspace_id not null, referencing workspace
- *   - ENABLE ROW LEVEL SECURITY plus a policy on workspace_id  (ADR 0002, invariant I1)
+ *   - ENABLE plus FORCE ROW LEVEL SECURITY, and exactly one permissive policy, whose text must
+ *     match what `canonicalPolicySql` produces (ADR 0002, ADR 0050, invariant I1). A migration is a
+ *     .sql file and cannot call that function, so nothing *prevents* drift - G7 fails on it. A
+ *     second permissive policy fails the build too: they combine with OR, so a second one can only
+ *     widen what is visible
+ *   - grants matching the entry's `appPrivileges` exactly. The bootstrap no longer grants anything
+ *     on tables, so a migration that forgets them produces a table the application cannot read -
+ *     which is the intended direction of failure
  *   - a ULID primary key in a `uuid` column, supplied by the application, no default
  *     (ADR 0043, invariant I12)
  *   - for activity and consent, revoked UPDATE and DELETE (ADR 0009, invariant I6)
@@ -88,13 +98,11 @@ export const workspace = pgTable('workspace', {
 });
 
 /**
- * Tables that are tenant-scoped, for the RLS assertion in gate G7. A table added to the
- * schema without being listed here (or without RLS) fails the build.
+ * How a table is protected is declared in `./access.ts`, not here (ADR 0050).
+ *
+ * `TENANT_TABLES` and `NON_TENANT_TABLES` used to live at the bottom of this file. They classified
+ * by whether a table carried a `workspace_id` column, which says nothing about a table protected
+ * some other way - so `session`, which ADR 0047 scopes by `app.current_user`, would have sat in
+ * `NON_TENANT_TABLES` looking perfectly correct. `TABLE_ACCESS` classifies by what G7 must demand
+ * instead, and every table declared above has to appear in it.
  */
-export const TENANT_TABLES: readonly string[] = [];
-
-/**
- * Public tables that deliberately have no workspace_id. G7 requires every public table
- * to appear in exactly one inventory, so omitting tenant metadata cannot bypass the gate.
- */
-export const NON_TENANT_TABLES: readonly string[] = ['workspace'];

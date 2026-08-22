@@ -63,4 +63,4 @@ The last line is the real check. `deploy-test` ends by curling `/health` and `/`
 
 Nothing machine-checks the pin's freshness, and deliberately so — a gate that reaches the npm registry to compare against `latest` is a gate that fails when the registry is slow, which is the flakiness this record just rejected elsewhere.
 
-What enforces the pin itself is G2: `.github/workflows/ci.yml` is a watched file, so changing that version string requires a decision record, and this is it. What enforces that a bump actually works is `deploy-test` — it runs on every push to `develop` and ends by curling both services for a 200.
+What enforces the pin itself is G2: `.github/workflows/ci.yml` is a watched file, so changing that version string requires a decision record, and this is it. What enforces that a bump actually works is `deploy-test` — it runs on pushes to `testing` while `DEPLOY_TEST=true` and ends by curling both services for a 200. ADR 0049 blocks promotion to `staging` unless both checks succeeded.

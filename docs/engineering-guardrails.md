@@ -4,7 +4,7 @@ How the architecture in [`architecture.md`](./architecture.md) stays true once s
 
 Stack is settled: **Next.js web, NestJS on the Fastify adapter, one worker, one Postgres** (ADR 0001, checklist S1).
 
-**Last updated:** 2026-08-21
+**Last updated:** 2026-08-22
 
 ---
 
@@ -86,7 +86,7 @@ Two kinds. A machine gate blocks the merge; a human gate is a checklist line som
 | G4 | Lint passes, no new warnings | machine | merge |
 | G5 | Unit tests pass | machine | merge |
 | G6 | An invariant test exists and passes for every I1–I12 | machine | merge |
-| G7 | Migrations apply to a fresh database, every tenant table has RLS the application role is subject to, and the column conventions hold | machine | merge |
+| G7 | Migrations apply to a fresh database, every declared table is classified in `TABLE_ACCESS` and carries exactly the policy or grants its class demands, and the column conventions hold | machine | merge |
 | G8 | Integration tests pass against real Postgres | machine | merge |
 | G9 | Performance budget met on the pipeline and contact screens | machine | merge |
 | G10 | OpenAPI spec regenerates with no diff, and no endpoint is undocumented. Both halves real since ADR 0045 | machine | merge |
@@ -97,6 +97,12 @@ Two kinds. A machine gate blocks the merge; a human gate is a checklist line som
 | G15 | Every Notion page derived from these documents is current, or the drift is acknowledged | machine | merge |
 
 G6 and G7 are the two most easily skipped and the two that matter most. G6 turns the architecture into tests that fail when someone contradicts it. G7 is the difference between multi-tenancy and a data breach with a plausible-looking query.
+
+G7 reports ten subchecks separately rather than one verdict, because they become real at different moments and a summary line would let the others read as proven (ADR 0048). Each is tagged **real**, **waiting** or **conditional**, and the script prints all three counts. **Three are real today**: the database roles, every table declared in `schema.ts` appearing in `TABLE_ACCESS`, and the behavioural cross-tenant probe on a fixture table. **Five are waiting** on a schema. **Two are conditional and may never fire at all** — `table ownership` needs `convert_app` to own a row-scoped table, which `bootstrap.sql` forbids outright, and `definer routines` needs somebody to write one. Calling those two "not yet real" would be the same overstatement ADR 0048 is about, one level up. `TABLE_ACCESS` (ADR 0050) replaced `TENANT_TABLES` and `NON_TENANT_TABLES`, which classified by whether a table carried a `workspace_id` column and so had nothing to say about a table protected some other way.
+
+**Every view sets `security_invoker = true`** (ADR 0051). Without it a view reads its base tables as its owner, and migrations run as the owner, so it bypasses every policy on them — measured, not theorised: a plain view over a policed table returned every tenant's rows where the table returned one. The option is required on every view, whatever it selects from, because a view's base tables change and a rule with a condition in it is one people get wrong. **A materialized view may not read a row-scoped table**, checked through the dependency graph, because row-level security is never applied when reading one and no option changes that; the replacement is a real table maintained by the worker with its own policy.
+
+**Migrations are not tenant-scoped, deliberately** (ADR 0052). The `DATABASE_URL` role must be able to bypass row-level security, and G7 asserts it: a migration operates on every tenant's rows by definition, and an ordinary owner against a `FORCE`d table turns a backfill into `UPDATE 0` that reports success — the worst outcome under forward-only migrations. G7 also asserts the two roles are distinct, that the app connection really is `convert_app`, and that `convert_app` can reach **no** role that bypasses. The mechanism there is `SET ROLE`, not inheritance — role attributes are never inherited through membership, but a member can `SET ROLE` to anything it reaches and take the attribute on, so `grant some_bypassing_role to convert_app` is a full escape. And because the owner is now a bypassing role, a `SECURITY DEFINER` function it owns is one too, with `EXECUTE` defaulting to `PUBLIC`; G7 fails any such routine the application can execute, and any without `SET search_path`. The tenancy boundary is therefore a property of the application's connection, not of the database as a whole.
 
 CI jobs are written so they pass on an empty repository and tighten automatically as the corresponding code lands. A pipeline that is red from day one gets ignored, then disabled.
 
@@ -159,7 +165,9 @@ Each of these has bitten similar products. They are here because a reviewer need
 
 No agent or tool co-authorship trailers. Commits carry their human author only.
 
-**Branches.** `type/short-description`, e.g. `feat/lead-capture-form`. Work off `main`; no long-lived branches while the team is this size.
+**Branches.** `type/short-description`, e.g. `feat/lead-capture-form`. Work branches start from
+`develop`. Releases move by pull request through `develop` -> `testing` -> `staging` -> `main`;
+each long-lived branch accepts changes only from the branch immediately to its left.
 
 **Naming.** Domain vocabulary from `architecture.md` §6 and the ubiquitous language in `mvp-scope.md`. A `Lead` is not an `Opportunity`; a `Deal` is not a `Sale`. If the product doc and the code disagree on a word, one of them is a bug.
 
@@ -206,36 +214,47 @@ If a PR needs a walkthrough to be understood, it is too big or the code is uncle
 
 ## 8. The git workflow
 
-`main` is protected. Nobody pushes to it, including the maintainer, GitHub enforces
-this for administrators too.
+`develop`, `testing`, `staging`, and `main` are protected. Nobody pushes to them, including the
+maintainer; GitHub enforces this for administrators too. Their roles are fixed:
+
+| Branch | Receives PRs from | Deployment |
+|--------|-------------------|------------|
+| `develop` | feature and fix branches | none |
+| `testing` | `develop` | Railway `test` |
+| `staging` | `testing` | Railway `staging` |
+| `main` | `staging` | production release; deployment not configured yet |
 
 **The loop**
 
-1. Branch: `type/short-description`.
+1. Branch from `develop`: `type/short-description`.
 2. Commit in Conventional Commits form. The `commit-msg` hook checks the shape and
    rejects agent or tool co-authorship trailers; commits carry their human author only.
 3. Push. The `pre-push` hook runs the boundary, invariant, contrast, and Notion-mirror
    checks, the four that need no dependencies and finish in about a second.
-4. Open a pull request. All four CI jobs must pass, the branch must be up to date with
-   `main`, and every review conversation must be resolved.
+4. Open a pull request to `develop`. All four CI jobs must pass, the branch must be up to date
+   with `develop`, and every review conversation must be resolved.
 5. Squash merge. The branch deletes itself.
+6. Promote a release only with `develop` -> `testing`, `testing` -> `staging`, and `staging` ->
+   `main` pull requests. Use a merge commit for promotion, never squash or rebase. The same gate
+   suite runs at every step. Promotion to `staging` or `main` also requires both services to have
+   successful deployment checks in the preceding environment.
 
 **Settings, and why**
 
 | Setting | Value | Reason |
 |---------|-------|--------|
 | Required checks | the four CI jobs, **by exact job name** | Gates G1–G15 are the merge criteria |
-| Strict (up to date) | on | A green check against stale `main` proves nothing |
+| Strict (up to date) | on | A green check against a stale target branch proves nothing |
 | Administrators | enforced | A rule the owner can skip is a suggestion |
-| Required approvals | 0 | A solo maintainer cannot approve their own PR; `main` would deadlock. Raise to 1 the day a second developer joins |
+| Required approvals | 0 | A solo maintainer cannot approve their own PR; promotion would deadlock. Raise to 1 the day a second developer joins |
 | Code-owner review | off | Same reason. Turn on with the approval count |
-| Linear history | on | Squash-only, so history stays readable |
+| Merge method | squash into `develop`; merge commit for promotion | Feature history stays compact while long-lived branches retain ancestry |
+| Linear history | `develop` on; promotion branches off | Promotion merge commits preserve the commit chain between environments |
 | Force push / deletion | blocked | no |
 | Conversation resolution | required | Stops review comments being merged past |
 
-The zero-approval setting is the one compromise here, and it is temporary. Everything
-else, checks, up-to-date branches, no direct pushes, no force pushes, applies to
-everyone from today.
+The zero-approval setting is the one compromise here, and it is temporary. Everything else,
+checks, up-to-date branches, no direct pushes, no force pushes, applies to every protected branch.
 
 **A job name in `ci.yml` is the identifier branch protection matches on.** Renaming a job
 silently stops the required check from ever reporting, and the pull request becomes
@@ -243,7 +262,7 @@ unmergeable with every visible check green, which reads as a GitHub fault rather
 our own edit. Rename a job and update the required contexts in the same sitting:
 
 ```bash
-gh api repos/convertap/convert/branches/main/protection/required_status_checks \
+gh api repos/convertap/convert/branches/BRANCH/protection/required_status_checks \
   --jq '{strict, contexts}'          # read the current contract before changing a name
 ```
 
