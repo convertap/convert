@@ -11,10 +11,7 @@
     ]
   },
   "deploy": {
-    "preDeployCommand": [
-      "pnpm --filter @convert/infra bootstrap",
-      "pnpm --filter @convert/infra migrate"
-    ],
+    "preDeployCommand": "pnpm --filter @convert/infra pre-deploy",
     "startCommand": "pnpm --filter @convert/api start",
     "healthcheckPath": "/ready",
     "healthcheckTimeout": 30,
