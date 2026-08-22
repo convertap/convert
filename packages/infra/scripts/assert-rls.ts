@@ -361,6 +361,35 @@ const main = async () => {
       where r.rolname <> ${role.current_user}
         and (r.rolsuper or r.rolbypassrls or r.rolname = ${AUTH_ROLE})
     `);
+    // The verdict comes from pg_has_role above. This is only for the remediation line: an operator
+    // told "you can reach X" and not which grant to revoke has to go looking, and review pointed out
+    // that dropping the old walk took that with it. Cycle-safe through a visited array and
+    // deliberately unbounded, because a depth limit here is what hid a seventeen-edge chain when the
+    // walk was load-bearing.
+    const paths = new Map<string, string>();
+    if (reachable.rows.some((r) => r.can_set || r.inherits)) {
+      const walked = await db.execute<{ rolname: string; path: string }>(sql`
+        with recursive climb(oid, path, visited) as (
+          select r.oid, r.rolname::text, array[r.oid]
+          from pg_roles r
+          where r.rolname = ${role.current_user}
+          union all
+          select parent.oid,
+                 climb.path || ' -> ' || parent.rolname,
+                 climb.visited || parent.oid
+          from climb
+          join pg_auth_members m on m.member = climb.oid
+          join pg_roles parent on parent.oid = m.roleid
+          where not parent.oid = any(climb.visited)
+        )
+        select r.rolname, min(climb.path) as path
+        from climb
+        join pg_roles r on r.oid = climb.oid
+        group by r.rolname
+      `);
+      for (const row of walked.rows) paths.set(row.rolname, row.path);
+    }
+
     for (const row of reachable.rows) {
       // Role attributes are never inherited, so for a bypassing role only SET ROLE matters. For
       // the identity role both do: SET ROLE takes on its policies, and inheritance hands over the
@@ -380,10 +409,12 @@ const main = async () => {
         : row.rolsuper
           ? 'is a SUPERUSER'
           : 'holds BYPASSRLS';
+      const via = paths.get(row.rolname);
       roleFailures.push(
-        `${role.current_user} can reach ${row.rolname}, and ${how}. That role ${why}. Postgres was ` +
-          'asked directly with pg_has_role rather than walked to a fixed depth, so no length of ' +
-          'membership chain hides this',
+        `${role.current_user} can reach ${row.rolname}, and ${how}. That role ${why}` +
+          (via ? `. Revoke along: ${via}` : '') +
+          '. Postgres was asked directly with pg_has_role rather than walked to a fixed depth, so ' +
+          'no length of membership chain hides this',
       );
     }
   }
@@ -548,18 +579,64 @@ const main = async () => {
     where con.contype = 'f' and n.nspname = 'public'
   `);
 
-  // ---- 3. ownership. Real only once a table exists that needs a policy. ----------------------
-
+  // ---- 3. ownership, and who can reach the owner. ---------------------------------------------
+  //
+  // The first version asked only whether the application role owned a policed table, which
+  // `bootstrap.sql` forbids, so it never had anything to iterate. Review found the gap that made
+  // that narrowness dangerous: **ownership is a capability the application can acquire.** FORCE ROW
+  // LEVEL SECURITY stops an owner bypassing its policies; it does not stop the owner running
+  // `alter table ... disable row level security`. So a plain role that owns a policed table and is
+  // `SET`-reachable from convert_app is a full escape, and both the role subcheck and this one
+  // looked straight past it: the role walk only considers roles that bypass or own the identity
+  // functions, and this one only considered tables literally owned by the application.
+  //
+  // Review demonstrated it end to end: transfer `user` to an ordinary nosuperuser nobypassrls role,
+  // grant that role to convert_app `with inherit false, set true`, and the gate stayed green while
+  // the application set the role, disabled RLS, and read every account.
   const ownershipFailures: string[] = [];
-  const ownedNeedingPolicy = tables.filter((t) => {
+  const policed = tables.filter((t) => {
     const access = entryFor(t);
-    return t.owner === role?.current_user && access !== undefined && isRlsAccess(access);
+    return access !== undefined && isRlsAccess(access);
   });
-  for (const t of ownedNeedingPolicy) {
-    if (!t.forced) {
+
+  const owners = [...new Set(policed.map((t) => t.owner))];
+  const ownerReach = new Map<string, { can_set: boolean; inherits: boolean }>();
+  if (role && owners.length > 0) {
+    const reach = await db.execute<{ rolname: string; can_set: boolean; inherits: boolean }>(sql`
+      select r.rolname,
+             pg_has_role(${role.current_user}, r.oid, 'SET') as can_set,
+             pg_has_role(${role.current_user}, r.oid, 'USAGE') as inherits
+      from pg_roles r
+      where r.rolname = any(${sql.raw(
+        `array[${owners.map((o) => `'${o.replace(/'/g, "''")}'`).join(', ')}]::name[]`,
+      )})
+    `);
+    for (const row of reach.rows) {
+      ownerReach.set(row.rolname, { can_set: row.can_set, inherits: row.inherits });
+    }
+  }
+
+  for (const t of policed) {
+    if (t.owner === role?.current_user) {
+      if (!t.forced) {
+        ownershipFailures.push(
+          `${t.relname}: is owned by the application role and is not FORCE ROW LEVEL SECURITY, so ` +
+            'the owner bypasses its policies',
+        );
+      }
       ownershipFailures.push(
-        `${t.relname}: is owned by the application role and is not FORCE ROW LEVEL SECURITY, so ` +
-          'the owner bypasses its policies',
+        `${t.relname}: is owned by the application role, which can therefore disable row-level ` +
+          'security on it whatever FORCE says',
+      );
+      continue;
+    }
+    const reach = ownerReach.get(t.owner);
+    if (reach && (reach.can_set || reach.inherits)) {
+      const how = reach.can_set ? 'can SET ROLE to' : 'inherits';
+      ownershipFailures.push(
+        `${t.relname}: is owned by ${t.owner}, and ${APP_ROLE} ${how} that role. An owner can run ` +
+          'ALTER TABLE DISABLE ROW LEVEL SECURITY, which FORCE does not prevent, so reaching the ' +
+          'owner is equivalent to holding BYPASSRLS on this table',
       );
     }
   }
@@ -567,14 +644,14 @@ const main = async () => {
   subchecks.push({
     name: 'table ownership',
     failures: ownershipFailures,
-    // Conditional, not waiting: bootstrap.sql denies convert_app CREATE and ownership, so no
-    // migration can make this fire. ADR 0042 named it as real today and it never was.
-    status: ownedNeedingPolicy.length > 0 ? 'real' : 'conditional',
+    // Real once any policed table exists, because there is now an owner to ask about. It was
+    // `conditional` while the only question was whether convert_app owned one, which bootstrap.sql
+    // forbids outright.
+    status: policed.length > 0 ? 'real' : 'waiting',
     verdict:
-      ownedNeedingPolicy.length > 0
-        ? `${ownedNeedingPolicy.length} table(s) owned by the application role force RLS`
-        : `${APP_ROLE} owns no table that needs a policy, so there was nothing to check. ADR ` +
-          '0042 named this check as real today; it has never had anything to iterate',
+      policed.length > 0
+        ? `${policed.length} policed table(s) are owned by a role ${APP_ROLE} can neither become nor inherit`
+        : 'no table needs a policy yet, so there was no owner to ask about',
   });
 
   // ---- 4. the registry matches the catalogue, both directions. --------------------------------
@@ -1542,7 +1619,10 @@ const main = async () => {
       continue;
     }
     if (candidates.length > 1) {
-      identityFailures.push(`${wanted} resolves to ${candidates.length} routines, which cannot be`);
+      identityFailures.push(
+        `${wanted} resolves to ${candidates.length} routines, which is ambiguous. Exactly one ` +
+          'function must match each registry key',
+      );
     }
     const found = candidates[0]!;
     matched.add(signature(found));
@@ -1607,7 +1687,14 @@ const main = async () => {
   }
 
   for (const routine of routines.rows) {
-    if (routine.owner === AUTH_ROLE && !matched.has(signature(routine))) {
+    // Two rules, not one. Anything convert_auth owns anywhere must be registered, and any routine
+    // in `public` wearing a registered *name* must be registered too, whoever owns it. The previous
+    // version applied only the first, so review created `auth_find_user_by_phone(integer)` owned by
+    // the migration owner: the query loaded it, the check ignored it, and the verdict still claimed
+    // an exact registry match while an unreviewed callable sat under an authentication name.
+    const unregisteredName =
+      routine.schema === 'public' && registeredNames.includes(routine.name);
+    if ((routine.owner === AUTH_ROLE || unregisteredName) && !matched.has(signature(routine))) {
       identityFailures.push(
         `${signature(routine)} is owned by ${AUTH_ROLE} and is not a registered lookup. The role ` +
           'exists to own exactly the surface AUTH_FUNCTIONS names, so an overload, a procedure, or ' +
