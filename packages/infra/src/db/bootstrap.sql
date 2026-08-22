@@ -18,12 +18,12 @@ do $$
 begin
   if not exists (select 1 from pg_roles where rolname = 'convert_app') then
     execute format(
-      'create role convert_app login password %L nosuperuser nobypassrls nocreatedb nocreaterole',
+      'create role convert_app login password %L nosuperuser nobypassrls nocreatedb nocreaterole noreplication',
       current_setting('convert.app_password')
     );
   else
     execute format(
-      'alter role convert_app password %L nosuperuser nobypassrls nocreatedb nocreaterole',
+      'alter role convert_app password %L nosuperuser nobypassrls nocreatedb nocreaterole noreplication',
       current_setting('convert.app_password')
     );
   end if;
@@ -71,9 +71,9 @@ grant usage on schema public to convert_app;
 do $$
 begin
   if not exists (select 1 from pg_roles where rolname = 'convert_auth') then
-    create role convert_auth nologin nosuperuser nobypassrls nocreatedb nocreaterole;
+    create role convert_auth nologin nosuperuser nobypassrls nocreatedb nocreaterole noreplication;
   else
-    alter role convert_auth nologin nosuperuser nobypassrls nocreatedb nocreaterole;
+    alter role convert_auth nologin nosuperuser nobypassrls nocreatedb nocreaterole noreplication;
   end if;
 end
 $$;

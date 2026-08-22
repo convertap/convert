@@ -32,7 +32,16 @@ export type TablePrivilege = 'SELECT' | 'INSERT' | 'UPDATE' | 'DELETE';
  * The first version of this gate checked these on `role-grants` tables only - that is, on every
  * class except the two that hold tenant data. `grant truncate on contact to convert_app` passed.
  */
-export const FORBIDDEN_PRIVILEGES = ['TRUNCATE', 'REFERENCES', 'TRIGGER'] as const;
+export const FORBIDDEN_PRIVILEGES = [
+  'TRUNCATE',
+  'REFERENCES',
+  'TRIGGER',
+  // MAINTAIN arrived in Postgres 17 and was missing from this list until review enumerated the
+  // privilege set from the documentation rather than from memory. It permits VACUUM, ANALYZE,
+  // REINDEX, CLUSTER and REFRESH MATERIALIZED VIEW on a table, none of which row-level security
+  // governs, and REFRESH in particular recomputes stored rows.
+  'MAINTAIN',
+] as const;
 
 /** The role the application connects as (ADR 0042). Policies name it; nothing names PUBLIC. */
 export const APP_ROLE = 'convert_app';

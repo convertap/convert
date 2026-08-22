@@ -344,6 +344,35 @@ const main = async () => {
   // they are not the same: a chain granted `WITH INHERIT FALSE, SET FALSE` confers neither, and the
   // previous message called it an escape anyway, which was a false positive with a confident
   // explanation attached.
+  // Two attributes review named from the documentation that nothing here asserted. CREATEROLE plus
+  // ADMIN OPTION lets a role alter other non-superuser roles, including their passwords and login
+  // rights; REPLICATION permits a replication connection, which streams the database out past every
+  // policy. `bootstrap.sql` creates the application role without either, and this checks the
+  // database rather than trusting that the file ran.
+  if (role) {
+    const attributes = await db.execute<{ rolcreaterole: boolean; rolreplication: boolean }>(sql`
+      select rolcreaterole, rolreplication from pg_roles where rolname = ${APP_ROLE}
+    `);
+    const app = attributes.rows[0];
+    if (app?.rolcreaterole) {
+      roleFailures.push(
+        `${APP_ROLE} holds CREATEROLE, which with ADMIN OPTION lets it alter other non-superuser ` +
+          'roles and their login rights. It has no reason to create a role at all',
+      );
+    }
+    if (app?.rolreplication) {
+      roleFailures.push(
+        `${APP_ROLE} holds REPLICATION, which permits a replication connection that streams the ` +
+          'whole database out past every policy. Row-level security does not police replication',
+      );
+    }
+  }
+
+  // Roles the application can reach by holding ADMIN OPTION somewhere on the path. Declared out
+  // here because the ownership subcheck below needs the same answer: ADMIN is a capability over any
+  // role, and owning a policed table is as dangerous as bypassing policies on it.
+  const adminReachable = new Set<string>();
+
   if (role) {
     const reachable = await db.execute<{
       rolname: string;
@@ -361,55 +390,87 @@ const main = async () => {
       where r.rolname <> ${role.current_user}
         and (r.rolsuper or r.rolbypassrls or r.rolname = ${AUTH_ROLE})
     `);
-    // The verdict comes from pg_has_role above. This is only for the remediation line: an operator
-    // told "you can reach X" and not which grant to revoke has to go looking, and review pointed out
-    // that dropping the old walk took that with it. Cycle-safe through a visited array and
-    // deliberately unbounded, because a depth limit here is what hid a seventeen-edge chain when the
-    // walk was load-bearing.
-    const paths = new Map<string, string>();
-    if (reachable.rows.some((r) => r.can_set || r.inherits)) {
-      const walked = await db.execute<{ rolname: string; path: string }>(sql`
-        with recursive climb(oid, path, visited) as (
-          select r.oid, r.rolname::text, array[r.oid]
-          from pg_roles r
-          where r.rolname = ${role.current_user}
-          union all
-          select parent.oid,
-                 climb.path || ' -> ' || parent.rolname,
-                 climb.visited || parent.oid
-          from climb
-          join pg_auth_members m on m.member = climb.oid
-          join pg_roles parent on parent.oid = m.roleid
-          where not parent.oid = any(climb.visited)
-        )
-        select r.rolname, min(climb.path) as path
-        from climb
-        join pg_roles r on r.oid = climb.oid
-        group by r.rolname
-      `);
-      for (const row of walked.rows) paths.set(row.rolname, row.path);
+
+    // ADMIN OPTION, which is the capability the first two versions of this check could not see.
+    // pg_has_role answers what the application can do *now*. It says nothing about what the
+    // application can give itself: a membership granted WITH ADMIN TRUE, INHERIT FALSE, SET FALSE
+    // reports USAGE false and SET false, and the member can then grant itself the same role WITH
+    // SET TRUE and become it. Review did exactly that to a table owner and disabled row-level
+    // security while the gate printed 11 of 11 real.
+    //
+    // So membership carrying ADMIN anywhere on a path is treated as reachable. Edges are fetched
+    // once and walked in TypeScript, which also fixes the diagnostic: the previous recursive CTE
+    // used UNION ALL and enumerated every simple path, so review timed it out with a legal 45-role
+    // graph. This is O(V + E) and visits each role once.
+    const edges = await db.execute<{
+      member: string;
+      granted: string;
+      admin_option: boolean;
+    }>(sql`
+      select m.rolname as member, g.rolname as granted, am.admin_option
+      from pg_auth_members am
+      join pg_roles m on m.oid = am.member
+      join pg_roles g on g.oid = am.roleid
+    `);
+
+    const outgoing = new Map<string, { granted: string; admin: boolean }[]>();
+    for (const edge of edges.rows) {
+      const list = outgoing.get(edge.member) ?? [];
+      list.push({ granted: edge.granted, admin: edge.admin_option });
+      outgoing.set(edge.member, list);
     }
 
+    // Breadth-first, so the path reported is the shortest one and each role is visited once.
+    const cameFrom = new Map<string, string>();
+    const queue: { role: string; admin: boolean }[] = [
+      { role: role.current_user, admin: false },
+    ];
+    const seen = new Set<string>([role.current_user]);
+    while (queue.length > 0) {
+      const here = queue.shift()!;
+      for (const next of outgoing.get(here.role) ?? []) {
+        const adminOnPath = here.admin || next.admin;
+        if (seen.has(next.granted)) continue;
+        seen.add(next.granted);
+        cameFrom.set(next.granted, here.role);
+        if (adminOnPath) adminReachable.add(next.granted);
+        queue.push({ role: next.granted, admin: adminOnPath });
+      }
+    }
+    const pathTo = (target: string): string | undefined => {
+      if (!seen.has(target) || target === role.current_user) return undefined;
+      const hops = [target];
+      let cursor = target;
+      while (cameFrom.has(cursor)) {
+        cursor = cameFrom.get(cursor)!;
+        hops.unshift(cursor);
+      }
+      return hops.join(' -> ');
+    };
     for (const row of reachable.rows) {
       // Role attributes are never inherited, so for a bypassing role only SET ROLE matters. For
       // the identity role both do: SET ROLE takes on its policies, and inheritance hands over the
       // privileges those policies gate.
       const isAuth = row.rolname === AUTH_ROLE;
-      const dangerous = isAuth ? row.can_set || row.inherits : row.can_set;
+      const admin = adminReachable.has(row.rolname);
+      const dangerous = (isAuth ? row.can_set || row.inherits : row.can_set) || admin;
       if (!dangerous) continue;
 
       const how = row.can_set
         ? row.inherits
           ? 'can SET ROLE to it and inherits its privileges'
           : 'can SET ROLE to it'
-        : 'inherits its privileges';
+        : row.inherits
+          ? 'inherits its privileges'
+          : 'holds ADMIN OPTION on a membership leading to it, so it can grant itself SET ROLE ' +
+            'and then become it';
       const why = isAuth
         ? 'owns the identity lookup functions and holds the permissive policy on the tables they ' +
           'read, so reaching it exposes every account it can see'
         : row.rolsuper
           ? 'is a SUPERUSER'
           : 'holds BYPASSRLS';
-      const via = paths.get(row.rolname);
+      const via = pathTo(row.rolname);
       roleFailures.push(
         `${role.current_user} can reach ${row.rolname}, and ${how}. That role ${why}` +
           (via ? `. Revoke along: ${via}` : '') +
@@ -631,8 +692,13 @@ const main = async () => {
       continue;
     }
     const reach = ownerReach.get(t.owner);
-    if (reach && (reach.can_set || reach.inherits)) {
-      const how = reach.can_set ? 'can SET ROLE to' : 'inherits';
+    const ownerViaAdmin = adminReachable.has(t.owner);
+    if (reach && (reach.can_set || reach.inherits || ownerViaAdmin)) {
+      const how = reach.can_set
+        ? 'can SET ROLE to'
+        : reach.inherits
+          ? 'inherits'
+          : 'holds ADMIN OPTION on a membership leading to, and can therefore grant itself SET ROLE on,';
       ownershipFailures.push(
         `${t.relname}: is owned by ${t.owner}, and ${APP_ROLE} ${how} that role. An owner can run ` +
           'ALTER TABLE DISABLE ROW LEVEL SECURITY, which FORCE does not prevent, so reaching the ' +
@@ -1236,7 +1302,7 @@ const main = async () => {
       from pg_class c
       join pg_namespace n on n.oid = c.relnamespace
       cross join unnest(array[
-        'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'
+        'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN'
       ]) as p(priv)
       where n.nspname = 'public'
         and c.relkind in ('r', 'p', 'v', 'm')
@@ -1253,10 +1319,22 @@ const main = async () => {
       for (const row of rows) {
         if ((FORBIDDEN_PRIVILEGES as readonly string[]).includes(row.privilege)) {
           if (row.on_table || row.on_column) {
+            // Named per privilege rather than listing all of them every time. Review twice found a
+            // correct verdict carrying an explanation that did not describe the case in hand, and
+            // adding MAINTAIN to this list made this message an example of it.
+            const because: Record<string, string> = {
+              TRUNCATE: 'TRUNCATE empties a table without visiting a row, so no policy filters it',
+              REFERENCES:
+                'REFERENCES lets a foreign key probe for the existence of rows a policy hides',
+              TRIGGER: 'TRIGGER runs code, and a policy is no defence against code',
+              MAINTAIN:
+                'MAINTAIN permits VACUUM, ANALYZE, REINDEX, CLUSTER and REFRESH MATERIALIZED ' +
+                'VIEW, none of which row-level security governs, and REFRESH recomputes stored rows',
+            };
             grantFailures.push(
-              `${label}: ${APP_ROLE} holds ${row.privilege}. Row-level security does not govern ` +
-                'it - TRUNCATE never visits a row, REFERENCES probes for rows a policy hides, ' +
-                'TRIGGER runs code - so the grant is the only control and it must not exist',
+              `${label}: ${APP_ROLE} holds ${row.privilege}. ` +
+                `${because[row.privilege] ?? 'Row-level security does not govern it'}, so the ` +
+                'grant is the only control and it must not exist',
             );
           }
           continue;
@@ -1440,7 +1518,7 @@ const main = async () => {
     appCanExecute: boolean;
     searchPath: string | null;
   }>(sql`
-    select p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' as routine,
+    select n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' as routine,
            o.rolname as owner,
            (o.rolsuper or o.rolbypassrls) as "canBypass",
            has_function_privilege(${APP_ROLE}, p.oid, 'EXECUTE') as "appCanExecute",
@@ -1455,10 +1533,28 @@ const main = async () => {
     from pg_proc p
     join pg_namespace n on n.oid = p.pronamespace
     join pg_roles o on o.oid = p.proowner
-    where n.nspname = 'public' and p.prosecdef
+    where p.prosecdef
   `);
 
+  // Owners of policed tables, for the check below. A SECURITY DEFINER routine executes with its
+  // owner's privileges, and only an owner may enable or disable row-level security or alter a
+  // policy. So a routine owned by a table's owner delegates owner-only DDL to whoever can execute
+  // it, and FORCE does not touch that: review created exactly such a function, granted EXECUTE to
+  // the application alone, and disabled RLS on `user` while this subcheck reported every routine
+  // safe because its owner did not *bypass* policies.
+  const policedOwners = new Set(policed.map((table) => table.owner));
+
   for (const routine of definers.rows) {
+    if (policedOwners.has(routine.owner) && !routine.canBypass) {
+      definerFailures.push(
+        `${routine.routine}: is SECURITY DEFINER and owned by ${routine.owner}, which owns a table ` +
+          'that needs a policy. An owner may run ALTER TABLE DISABLE ROW LEVEL SECURITY and may ' +
+          'alter policies, and a definer routine executes with its owner privileges, so this ' +
+          'routine delegates owner-only authority to whoever can execute it. FORCE does not ' +
+          'prevent it. Own it with a role that owns no policed table (ADR 0052, ADR 0054)',
+      );
+    }
+
     // No `appCanExecute` condition. Asking whether the application can execute *this* routine is
     // the narrow version of the question, and review beat it with two hops: an inner definer owned
     // by the bypassing owner with EXECUTE revoked, called by an outer definer owned by an ordinary
@@ -1696,9 +1792,10 @@ const main = async () => {
       routine.schema === 'public' && registeredNames.includes(routine.name);
     if ((routine.owner === AUTH_ROLE || unregisteredName) && !matched.has(signature(routine))) {
       identityFailures.push(
-        `${signature(routine)} is owned by ${AUTH_ROLE} and is not a registered lookup. The role ` +
-          'exists to own exactly the surface AUTH_FUNCTIONS names, so an overload, a procedure, or ' +
-          'a function in another schema is a read path nobody declared',
+        `${signature(routine)} is owned by ${routine.owner} and is not a registered lookup. ` +
+          `${AUTH_ROLE} exists to own exactly the surface AUTH_FUNCTIONS names, and a routine in ` +
+          'public wearing a registered name is a read path nobody declared whoever owns it. An ' +
+          'overload, a procedure, or a function in another schema all count',
       );
     }
   }
