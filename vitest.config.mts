@@ -75,6 +75,11 @@ export default defineConfig({
           },
         },
         test: {
+          // Deliberately NOT in `pnpm test`, which names its projects explicitly. This one needs
+          // two live connection strings and its setup throws without them rather than skipping,
+          // because a suite that skips itself when the database is missing is a gate that passes by
+          // not running. G5 runs the other three projects; G8 runs this one against real Postgres.
+          // Getting that wrong is what turned PR 57's first CI run red after a green local one.
           name: 'integration',
           globals: true,
           include: ['tests/integration/**/*.spec.ts'],

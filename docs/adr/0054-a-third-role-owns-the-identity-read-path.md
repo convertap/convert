@@ -113,9 +113,12 @@ the application's role has no privilege on it. The mechanism fits the gates as t
 which is why it needs no weakening of G7's definer check. And the column list being part of the
 decision means a future column is private until somebody widens a function on purpose.
 
-**Negative / cost.** A third role and a third connection string to provision in every environment,
-including both Railway environments where the second one is still an outstanding human step from ADR
-0042. Logic moves into the database, which nothing else in this system does, so there is now a place
+**Negative / cost.** A third role in every environment. This paragraph originally said "and a
+third connection string to provision", including in both Railway environments where the second
+one is still an outstanding human step from ADR 0042. **That cost does not exist**, found while
+building it on 22 August: a role owns functions without ever connecting, and nothing connects as
+`convert_auth`, so it is `NOLOGIN` with no password and no connection string. One fewer
+credential to provision and one fewer to leak. Logic moves into the database, which nothing else in this system does, so there is now a place
 where behaviour lives that the TypeScript layers cannot see. Every new identity read path is a
 migration rather than a query, which is friction by design and will feel like friction. Per-role
 policies make the canonical-policy assertion more complex, and a more complex assertion is a
@@ -142,22 +145,69 @@ likelier place for a defect than the thing it checks.
 
 ## Enforcement
 
-**Nothing enforces this yet, and the blockers stay in place until it does.** `user` and
-`verification_attempt` remain in `TABLE_ACCESS_BLOCKERS`, so G7 fails the build if either is declared
-before the mechanism exists. That is deliberate: a blocker removed before its mechanism ships is
-worse than the blocker, because the next person reads an empty list as an answered question.
+**Built and asserted, in `packages/infra/scripts/assert-rls.ts` (G7) and
+`tests/integration/tenancy.spec.ts` (G8).** `user` has left `TABLE_ACCESS_BLOCKERS`;
+`verification_attempt` stays, with its reason rewritten, because it lands with the auth module that
+writes to it.
 
-What has to land in one change, per CV-19's Done-when:
+`convert_auth` exists in `bootstrap.sql` as `NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE
+NOREPLICATION`, owning the two lookup functions and nothing else. G7 is 12 of 12 subchecks real, with
+nothing waiting and nothing conditional, and the ones this record is responsible for are:
 
-- `convert_auth` in `bootstrap.sql`, with its own connection string, and the assertion that
-  `convert_app` cannot reach it by any chain of membership.
-- The `user` and `verification_attempt` tables, their `TABLE_ACCESS` entries, and the per-role
-  policies above.
-- The functions, each `SECURITY DEFINER`, owned by `convert_auth`, with `search_path = ''` and a
-  named column list.
-- The canonical-policy assertion taught to expect a policy per role rather than one per table.
-- Behavioural tests: `convert_app` reading `user` directly sees its own row and no other;
-  `convert_app` calling the sign-in function gets one row or none; `convert_app` cannot `SET ROLE` to
-  `convert_auth`; the member list function returns only the caller's workspace.
+- **identity functions.** `AUTH_FUNCTIONS` is compared to the catalogue by `(schema, name, argument
+  types)`, in both directions: owner, `prosecdef`, volatility, exact `search_path=""`, result columns
+  as a set, and an ACL of exactly `convert_app:EXECUTE` with no grant option. Any routine
+  `convert_auth` owns in any schema, and any routine in `public` wearing a registered name whoever
+  owns it, must be registered.
+- **user-rls policies**, counted per table *and role*, so the `auth_reader` policy is required on the
+  tables `AUTH_FUNCTIONS` reads and refused everywhere else. A second permissive policy applicable to
+  the same role still fails.
+- **database roles.** `convert_app` cannot reach `convert_auth`, a bypassing role, or the owner of any
+  policed table, by `SET ROLE`, by inheritance, or by holding `ADMIN OPTION` anywhere on the path.
+  Reachability is asked with `pg_has_role` rather than walked to a depth.
+- **definer routines**, in every schema: none owned by a role that bypasses row-level security, and
+  none owned by a role that owns or inherits the owner of a policed table, because a routine runs
+  with its owner's privileges and only an owner may disable RLS or alter a policy.
+- **schema boundary.** Every other query in the gate reads `public` alone, so that assumption is now
+  asserted: outside the system schemas only `public` and `drizzle` may exist, and the application can
+  reach neither `drizzle` nor `CREATE` on `public`. `TEMP` is withheld from PUBLIC and from the
+  application, and `CREATEDB` from the application.
 
-Until that change merges, this record is a decision and says so.
+**Behaviour, not only catalogue.** `tests/integration/tenancy.spec.ts` connects as `convert_app` and
+asserts: one workspace and one member row visible; its own account and no other, even by direct id;
+the sign-in function returning one row for an account it cannot read and none for an unknown
+identifier; nothing at all with no context set, and no error; and SQLSTATE 42501 on `set role
+convert_auth`. Four of its seven tests fail if `convert_app` is granted `BYPASSRLS`, which is how the
+suite was shown to assert something.
+
+**Every assertion above was verified by building the shape and watching it fail**, across five
+independent review rounds that produced ten reproduced findings. The ones worth naming, because each
+passed a green gate first: a definer function with the policy and no grant, which failed at runtime
+with `permission denied for table user` while every catalogue subcheck passed; a seventeen-edge
+membership chain, past a depth bound; a role granted `WITH ADMIN TRUE, INHERIT FALSE, SET FALSE`,
+which reports no reachability and can grant itself `SET ROLE`; a convergent graph where an inert edge
+discovered a role before the ADMIN-bearing path to it; a definer routine whose owner merely
+*inherits* the table owner; and a plain owner-context view in another schema, which returned every
+account while the gate reported zero views.
+
+### What is not asserted, deliberately or otherwise
+
+Five rounds of review did not stop finding things, so this list is the honest state rather than a
+claim of completeness. **Each item below requires the migration owner to create the shape**: the
+application role holds no `CREATEROLE`, no `CREATE` on `public` or the database, and no `TEMP`, so it
+cannot construct any of them itself. These are defences against a mistaken or hostile migration
+passing review, not against the application escaping at runtime.
+
+- **Sequence privileges.** Outside `TABLE_ACCESS`, so `grant update` on a sequence passes. No sequence
+  exists, because ADR 0043 makes every key an application-supplied ULID, and `bootstrap.sql` grants
+  `usage, select` on sequences deliberately.
+- **`convert_auth`'s own `CREATEROLE` and `REPLICATION`.** Asserted for `convert_app`, not for the
+  identity role. `bootstrap.sql` sets both off; nothing checks that it did.
+- **The single-schema inventory is asserted, not inspected.** The gate refuses a second application
+  schema rather than reading it. If one is ever wanted, the registry has to carry schema-qualified
+  identities and every query above has to widen, which is a change to ADR 0050 and to this section.
+- **Point-in-time snapshots.** The gate runs several statements on more than one connection, so a role
+  or DDL change between them is not detected. Serialising deployment against role administration is an
+  operational precondition rather than something this file can prove.
+- **Foreign tables, procedures beyond the registry check, and event triggers.** Not modelled. A
+  foreign table is already refused by relation kind; the other two are unexamined.

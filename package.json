@@ -11,7 +11,7 @@
     "build": "turbo run build",
     "typecheck": "pnpm build:packages && turbo run typecheck",
     "lint": "eslint . --max-warnings=0",
-    "test": "vitest run",
+    "test": "vitest run --project unit --project apps --project invariants",
     "test:watch": "vitest",
     "test:integration": "vitest run --project integration",
     "db:up": "docker compose up -d postgres",
@@ -26,6 +26,7 @@
   "devDependencies": {
     "@types/node": "^26.2.0",
     "dotenv": "^17.4.2",
+    "drizzle-orm": "^0.45.2",
     "eslint": "^10.8.1",
     "lefthook": "^2.1.10",
     "prettier": "^3.9.6",

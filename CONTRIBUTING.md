@@ -17,7 +17,7 @@ Architecture is [`docs/architecture.md`](./docs/architecture.md); product scope 
 
 ## Current state
 
-The workspace is scaffolded and the api boots. `apps/api`, `apps/web` and `apps/worker` exist alongside `packages/contracts`, `core`, `application` and `infra`, and sixteen guardrails run in CI.
+The workspace is scaffolded and the api boots. `apps/api`, `apps/web` and `apps/worker` exist alongside `packages/contracts`, `core`, `application` and `infra`, and sixteen guardrails run in CI. The first migration landed on 22 August 2026: `workspace`, `user` and `workspace_member` with their policies, so G7 asserts twelve subchecks and G8 runs seven integration tests against real Postgres.
 
 **There is no schema and there are no migrations.** `packages/infra/src/db/schema.ts` holds `workspace` and nothing else, and `TABLE_ACCESS` in `packages/infra/src/db/access.ts` classifies that one table and no others. That is deliberate, not unfinished: the product rules that decide the shape of contact, lead and deal are settled but not yet turned into tables, which is what the *Schema and migration plan* effort is for. Two consequences for you: `pnpm test:integration` has nothing to run, and the G9 performance budget is trivially met because `apps/web` is a placeholder.
 

@@ -15,6 +15,9 @@ import {
   TENANT_TABLE,
   VIEW_OPTION,
   canonicalPolicySql,
+  AUTH_ROLE,
+  AUTH_READER_TABLES,
+  AUTH_FUNCTIONS,
 } from '../src/db/access';
 import type { TableAccess } from '../src/db/access';
 import * as schema from '../src/db/schema';
@@ -328,41 +331,159 @@ const main = async () => {
     }
   }
 
-  // Membership is a capability, not just a privilege path: a member can SET ROLE to any role it
-  // reaches, whatever INHERIT says, and thereby take on that role's attributes. So the question is
-  // not "is it a member of the owner" - the first version of this check asked exactly that, and
-  // review escaped it in one line with `create role rls_escape bypassrls; grant rls_escape to
-  // convert_app`. The question is whether the application role can reach *any* role that bypasses.
+  // Membership is a capability, and the question is what the application can *effectively* do, not
+  // what the graph looks like. The first version asked "is it a member of the owner" and review
+  // escaped it with `create role rls_escape bypassrls; grant rls_escape to convert_app`. The second
+  // walked the graph recursively with a depth bound of 16, and review escaped that by building a
+  // seventeen-edge chain: the gate printed "can reach no role that bypasses" and the application
+  // then ran `set role convert_auth` successfully.
+  //
+  // So the bound is gone and Postgres answers instead. `pg_has_role(..., 'SET')` is true exactly
+  // when the role can `SET ROLE` to the target, at any depth and through any mix of INHERIT and SET
+  // options, and `USAGE` is true exactly when it inherits the target's privileges. Both matter and
+  // they are not the same: a chain granted `WITH INHERIT FALSE, SET FALSE` confers neither, and the
+  // previous message called it an escape anyway, which was a false positive with a confident
+  // explanation attached.
+  // Two attributes review named from the documentation that nothing here asserted. CREATEROLE plus
+  // ADMIN OPTION lets a role alter other non-superuser roles, including their passwords and login
+  // rights; REPLICATION permits a replication connection, which streams the database out past every
+  // policy. `bootstrap.sql` creates the application role without either, and this checks the
+  // database rather than trusting that the file ran.
+  if (role) {
+    const attributes = await db.execute<{ rolcreaterole: boolean; rolreplication: boolean }>(sql`
+      select rolcreaterole, rolreplication from pg_roles where rolname = ${APP_ROLE}
+    `);
+    const app = attributes.rows[0];
+    if (app?.rolcreaterole) {
+      roleFailures.push(
+        `${APP_ROLE} holds CREATEROLE, which with ADMIN OPTION lets it alter other non-superuser ` +
+          'roles and their login rights. It has no reason to create a role at all',
+      );
+    }
+    if (app?.rolreplication) {
+      roleFailures.push(
+        `${APP_ROLE} holds REPLICATION, which permits a replication connection that streams the ` +
+          'whole database out past every policy. Row-level security does not police replication',
+      );
+    }
+  }
+
+  // Roles the application can reach by holding ADMIN OPTION somewhere on the path. Declared out
+  // here because the ownership subcheck below needs the same answer: ADMIN is a capability over any
+  // role, and owning a policed table is as dangerous as bypassing policies on it.
+  const adminReachable = new Set<string>();
+
   if (role) {
     const reachable = await db.execute<{
       rolname: string;
       rolsuper: boolean;
       rolbypassrls: boolean;
-      path: string;
+      can_set: boolean;
+      inherits: boolean;
     }>(sql`
-      with recursive climb(oid, path, depth) as (
-        select r.oid, r.rolname::text, 0
-        from pg_roles r
-        where r.rolname = ${role.current_user}
-        union all
-        select parent.oid, climb.path || ' -> ' || parent.rolname, climb.depth + 1
-        from climb
-        join pg_auth_members m on m.member = climb.oid
-        join pg_roles parent on parent.oid = m.roleid
-        -- pg_auth_members cannot hold a cycle, but depth is bounded anyway rather than trusting it.
-        where climb.depth < 16
-      )
-      select r.rolname, r.rolsuper, r.rolbypassrls, climb.path
-      from climb
-      join pg_roles r on r.oid = climb.oid
-      where climb.depth > 0 and (r.rolsuper or r.rolbypassrls)
+      select r.rolname,
+             r.rolsuper,
+             r.rolbypassrls,
+             pg_has_role(${role.current_user}, r.oid, 'SET') as can_set,
+             pg_has_role(${role.current_user}, r.oid, 'USAGE') as inherits
+      from pg_roles r
+      where r.rolname <> ${role.current_user}
+        and (r.rolsuper or r.rolbypassrls or r.rolname = ${AUTH_ROLE})
     `);
+
+    // ADMIN OPTION, which is the capability the first two versions of this check could not see.
+    // pg_has_role answers what the application can do *now*. It says nothing about what the
+    // application can give itself: a membership granted WITH ADMIN TRUE, INHERIT FALSE, SET FALSE
+    // reports USAGE false and SET false, and the member can then grant itself the same role WITH
+    // SET TRUE and become it. Review did exactly that to a table owner and disabled row-level
+    // security while the gate printed 11 of 11 real.
+    //
+    // So membership carrying ADMIN anywhere on a path is treated as reachable. Edges are fetched
+    // once and walked in TypeScript, which also fixes the diagnostic: the previous recursive CTE
+    // used UNION ALL and enumerated every simple path, so review timed it out with a legal 45-role
+    // graph. This is O(V + E) and visits each role once.
+    const edges = await db.execute<{
+      member: string;
+      granted: string;
+      admin_option: boolean;
+    }>(sql`
+      select m.rolname as member, g.rolname as granted, am.admin_option
+      from pg_auth_members am
+      join pg_roles m on m.oid = am.member
+      join pg_roles g on g.oid = am.roleid
+    `);
+
+    const outgoing = new Map<string, { granted: string; admin: boolean }[]>();
+    for (const edge of edges.rows) {
+      const list = outgoing.get(edge.member) ?? [];
+      list.push({ granted: edge.granted, admin: edge.admin_option });
+      outgoing.set(edge.member, list);
+    }
+
+    // Breadth-first over (role, was ADMIN seen on the way here), which is two states per role and
+    // not one. The first version keyed `seen` by role alone, and review broke it with a convergent
+    // graph: an inert direct edge to the table owner discovered that role first, so the later
+    // ADMIN-bearing path through an intermediate was skipped before it could mark it. The gate
+    // printed 11 of 11 while the application became the owner by granting itself SET ROLE. A role
+    // is therefore revisited exactly once, when its state improves from no-ADMIN to ADMIN.
+    const cameFrom = new Map<string, string>();
+    const bestKnown = new Map<string, boolean>([[role.current_user, false]]);
+    const queue: { role: string; admin: boolean }[] = [
+      { role: role.current_user, admin: false },
+    ];
+    while (queue.length > 0) {
+      const here = queue.shift()!;
+      for (const next of outgoing.get(here.role) ?? []) {
+        const adminOnPath = here.admin || next.admin;
+        const known = bestKnown.get(next.granted);
+        // Skip only when this path teaches nothing: the role is known already and either it is
+        // already known to be ADMIN-reachable, or this path does not carry ADMIN either.
+        if (known !== undefined && (known || !adminOnPath)) continue;
+        bestKnown.set(next.granted, adminOnPath);
+        cameFrom.set(next.granted, here.role);
+        if (adminOnPath) adminReachable.add(next.granted);
+        queue.push({ role: next.granted, admin: adminOnPath });
+      }
+    }
+    const pathTo = (target: string): string | undefined => {
+      if (!bestKnown.has(target) || target === role.current_user) return undefined;
+      const hops = [target];
+      let cursor = target;
+      while (cameFrom.has(cursor)) {
+        cursor = cameFrom.get(cursor)!;
+        hops.unshift(cursor);
+      }
+      return hops.join(' -> ');
+    };
     for (const row of reachable.rows) {
-      const why = row.rolsuper ? 'is a SUPERUSER' : 'holds BYPASSRLS';
+      // Role attributes are never inherited, so for a bypassing role only SET ROLE matters. For
+      // the identity role both do: SET ROLE takes on its policies, and inheritance hands over the
+      // privileges those policies gate.
+      const isAuth = row.rolname === AUTH_ROLE;
+      const admin = adminReachable.has(row.rolname);
+      const dangerous = (isAuth ? row.can_set || row.inherits : row.can_set) || admin;
+      if (!dangerous) continue;
+
+      const how = row.can_set
+        ? row.inherits
+          ? 'can SET ROLE to it and inherits its privileges'
+          : 'can SET ROLE to it'
+        : row.inherits
+          ? 'inherits its privileges'
+          : 'holds ADMIN OPTION on a membership leading to it, so it can grant itself SET ROLE ' +
+            'and then become it';
+      const why = isAuth
+        ? 'owns the identity lookup functions and holds the permissive policy on the tables they ' +
+          'read, so reaching it exposes every account it can see'
+        : row.rolsuper
+          ? 'is a SUPERUSER'
+          : 'holds BYPASSRLS';
+      const via = pathTo(row.rolname);
       roleFailures.push(
-        `${role.current_user} can reach ${row.rolname}, which ${why} (${row.path}). A member can ` +
-          'SET ROLE to anything it reaches regardless of INHERIT, so the application can take on ' +
-          'that role and every policy stops applying to it',
+        `${role.current_user} can reach ${row.rolname}, and ${how}. That role ${why}` +
+          (via ? `. Revoke along: ${via}` : '') +
+          '. Postgres was asked directly with pg_has_role rather than walked to a fixed depth, so ' +
+          'no length of membership chain hides this',
       );
     }
   }
@@ -377,7 +498,7 @@ const main = async () => {
     privilege: string;
     grantor: string;
   }>(sql`
-    select n.nspname as schema,
+    select coalesce(n.nspname, 'every schema') as schema,
            coalesce(pg_get_userbyid(a.grantee), 'PUBLIC') as grantee,
            a.privilege_type as privilege,
            -- defaclrole is load-bearing in the remediation: ALTER DEFAULT PRIVILEGES without a
@@ -386,19 +507,36 @@ const main = async () => {
            -- the gate stay red and concluded the tool was wrong.
            pg_get_userbyid(d.defaclrole) as grantor
     from pg_default_acl d
-    join pg_namespace n on n.oid = d.defaclnamespace
+    -- LEFT join, and that is the whole finding. A default privilege created without IN SCHEMA has
+    -- defaclnamespace = 0, which matches no pg_namespace row, so an inner join silently dropped
+    -- every global entry: the gate printed "no default privilege grants rights on future tables"
+    -- while one granted SELECT on every future table in every schema.
+    left join pg_namespace n on n.oid = d.defaclnamespace
     cross join lateral aclexplode(d.defaclacl) as a
     where d.defaclobjtype = 'r'
+      -- The grantor's own entry on its own future objects is not a grant to anybody else.
+      and a.grantee <> d.defaclrole
   `);
   for (const row of defaults.rows) {
-    if (row.grantee === APP_ROLE || row.grantee === 'PUBLIC') {
-      roleFailures.push(
-        `default privileges in schema ${row.schema} grant ${row.privilege} on future tables to ` +
-          `${row.grantee}, so every table a migration creates holds it whatever TABLE_ACCESS ` +
-          `declares. Revoke it: alter default privileges for role ${row.grantor} in schema ` +
-          `${row.schema} revoke ${row.privilege} on tables from ${row.grantee}`,
-      );
-    }
+    // Any grantee, not only the application role and PUBLIC. Review granted a default privilege to
+    // a third role and watched this check print "no default privilege grants rights on future
+    // tables" - true of the two names it looked at, and false of the database. The next table
+    // created would have carried an undeclared grant, which is the failure mode the registry
+    // exists to prevent, arriving one migration later than the mistake.
+    // Every grantee, with no exemption. Two earlier versions were narrower and review walked
+    // through both: the first looked only at the application role and PUBLIC, so a default grant to
+    // a third role passed; the second exempted convert_auth, and a blanket future-table grant to
+    // the identity role is nothing like the SELECT on AUTH_READER_TABLES the registry declares. A
+    // default privilege is the one grant that reaches tables nobody has written yet, so the
+    // registry cannot describe it and it must not exist.
+    const scope = row.schema === 'every schema' ? 'in every schema' : `in schema ${row.schema}`;
+    const remedy = row.schema === 'every schema' ? '' : ` in schema ${row.schema}`;
+    roleFailures.push(
+      `default privileges ${scope} grant ${row.privilege} on future tables to ${row.grantee}, so ` +
+        'every table a migration creates holds it whatever TABLE_ACCESS declares. Revoke it: ' +
+        `alter default privileges for role ${row.grantor}${remedy} revoke ${row.privilege} on ` +
+        `tables from ${row.grantee}`,
+    );
   }
 
   subchecks.push({
@@ -510,18 +648,69 @@ const main = async () => {
     where con.contype = 'f' and n.nspname = 'public'
   `);
 
-  // ---- 3. ownership. Real only once a table exists that needs a policy. ----------------------
-
+  // ---- 3. ownership, and who can reach the owner. ---------------------------------------------
+  //
+  // The first version asked only whether the application role owned a policed table, which
+  // `bootstrap.sql` forbids, so it never had anything to iterate. Review found the gap that made
+  // that narrowness dangerous: **ownership is a capability the application can acquire.** FORCE ROW
+  // LEVEL SECURITY stops an owner bypassing its policies; it does not stop the owner running
+  // `alter table ... disable row level security`. So a plain role that owns a policed table and is
+  // `SET`-reachable from convert_app is a full escape, and both the role subcheck and this one
+  // looked straight past it: the role walk only considers roles that bypass or own the identity
+  // functions, and this one only considered tables literally owned by the application.
+  //
+  // Review demonstrated it end to end: transfer `user` to an ordinary nosuperuser nobypassrls role,
+  // grant that role to convert_app `with inherit false, set true`, and the gate stayed green while
+  // the application set the role, disabled RLS, and read every account.
   const ownershipFailures: string[] = [];
-  const ownedNeedingPolicy = tables.filter((t) => {
+  const policed = tables.filter((t) => {
     const access = entryFor(t);
-    return t.owner === role?.current_user && access !== undefined && isRlsAccess(access);
+    return access !== undefined && isRlsAccess(access);
   });
-  for (const t of ownedNeedingPolicy) {
-    if (!t.forced) {
+
+  const owners = [...new Set(policed.map((t) => t.owner))];
+  const ownerReach = new Map<string, { can_set: boolean; inherits: boolean }>();
+  if (role && owners.length > 0) {
+    const reach = await db.execute<{ rolname: string; can_set: boolean; inherits: boolean }>(sql`
+      select r.rolname,
+             pg_has_role(${role.current_user}, r.oid, 'SET') as can_set,
+             pg_has_role(${role.current_user}, r.oid, 'USAGE') as inherits
+      from pg_roles r
+      where r.rolname = any(${sql.raw(
+        `array[${owners.map((o) => `'${o.replace(/'/g, "''")}'`).join(', ')}]::name[]`,
+      )})
+    `);
+    for (const row of reach.rows) {
+      ownerReach.set(row.rolname, { can_set: row.can_set, inherits: row.inherits });
+    }
+  }
+
+  for (const t of policed) {
+    if (t.owner === role?.current_user) {
+      if (!t.forced) {
+        ownershipFailures.push(
+          `${t.relname}: is owned by the application role and is not FORCE ROW LEVEL SECURITY, so ` +
+            'the owner bypasses its policies',
+        );
+      }
       ownershipFailures.push(
-        `${t.relname}: is owned by the application role and is not FORCE ROW LEVEL SECURITY, so ` +
-          'the owner bypasses its policies',
+        `${t.relname}: is owned by the application role, which can therefore disable row-level ` +
+          'security on it whatever FORCE says',
+      );
+      continue;
+    }
+    const reach = ownerReach.get(t.owner);
+    const ownerViaAdmin = adminReachable.has(t.owner);
+    if (reach && (reach.can_set || reach.inherits || ownerViaAdmin)) {
+      const how = reach.can_set
+        ? 'can SET ROLE to'
+        : reach.inherits
+          ? 'inherits'
+          : 'holds ADMIN OPTION on a membership leading to, and can therefore grant itself SET ROLE on,';
+      ownershipFailures.push(
+        `${t.relname}: is owned by ${t.owner}, and ${APP_ROLE} ${how} that role. An owner can run ` +
+          'ALTER TABLE DISABLE ROW LEVEL SECURITY, which FORCE does not prevent, so reaching the ' +
+          'owner is equivalent to holding BYPASSRLS on this table',
       );
     }
   }
@@ -529,14 +718,14 @@ const main = async () => {
   subchecks.push({
     name: 'table ownership',
     failures: ownershipFailures,
-    // Conditional, not waiting: bootstrap.sql denies convert_app CREATE and ownership, so no
-    // migration can make this fire. ADR 0042 named it as real today and it never was.
-    status: ownedNeedingPolicy.length > 0 ? 'real' : 'conditional',
+    // Real once any policed table exists, because there is now an owner to ask about. It was
+    // `conditional` while the only question was whether convert_app owned one, which bootstrap.sql
+    // forbids outright.
+    status: policed.length > 0 ? 'real' : 'waiting',
     verdict:
-      ownedNeedingPolicy.length > 0
-        ? `${ownedNeedingPolicy.length} table(s) owned by the application role force RLS`
-        : `${APP_ROLE} owns no table that needs a policy, so there was nothing to check. ADR ` +
-          '0042 named this check as real today; it has never had anything to iterate',
+      policed.length > 0
+        ? `${policed.length} policed table(s) are owned by a role ${APP_ROLE} can neither become nor inherit`
+        : 'no table needs a policy yet, so there was no owner to ask about',
   });
 
   // ---- 4. the registry matches the catalogue, both directions. --------------------------------
@@ -957,21 +1146,97 @@ const main = async () => {
 
       const mine = policies.rows.filter((p) => p.tablename === name);
       const permissive = mine.filter((p) => p.permissive);
-      if (permissive.length === 0) {
-        failures.push(`${label}: row-level security is enabled but no permissive policy exists`);
+
+      // Per role, not per table (ADR 0054). Permissive policies combine with OR, so a second one
+      // can only widen what is visible - but only among the policies that *apply to the current
+      // role*. A policy declared TO convert_auth never enters the OR when convert_app is asking, so
+      // counting per table would refuse the identity read path while proving nothing extra. What
+      // still has to hold is one permissive policy per table and role.
+      //
+      // A policy granted to PUBLIC is counted against every role deliberately: PUBLIC applies to
+      // whoever asks, including roles that do not exist yet.
+      const appliesTo = (p: (typeof permissive)[number], role: string) =>
+        p.roles.includes(role) || p.roles.includes('PUBLIC');
+
+      const forApp = permissive.filter((p) => appliesTo(p, APP_ROLE));
+      const forAuth = permissive.filter((p) => appliesTo(p, AUTH_ROLE));
+      const orphans = permissive.filter(
+        (p) => !appliesTo(p, APP_ROLE) && !appliesTo(p, AUTH_ROLE),
+      );
+
+      for (const p of orphans) {
+        failures.push(
+          `${label}: permissive policy ${p.polname} applies to [${[...p.roles].sort().join(', ')}], ` +
+            `which is neither ${APP_ROLE} nor ${AUTH_ROLE}. Do not read that as harmless: a policy ` +
+            `granted to a group role reaches every member of it, so if ${APP_ROLE} is a member ` +
+            'this widens what the application sees. Either it is dead or it is an undeclared ' +
+            'boundary, and either way it has to be a decision rather than a leftover',
+        );
+      }
+
+      if (forApp.length === 0) {
+        failures.push(
+          `${label}: row-level security is enabled but no permissive policy applies to ${APP_ROLE}`,
+        );
         continue;
       }
-      if (permissive.length > 1) {
+      if (forApp.length > 1) {
         failures.push(
-          `${label}: has ${permissive.length} permissive policies (${permissive
+          `${label}: has ${forApp.length} permissive policies applying to ${APP_ROLE} (${forApp
             .map((p) => p.polname)
-            .join(', ')}). Permissive policies combine with OR, so a second one can only widen ` +
-            'what is visible. Restrictive policies are fine; a second permissive one is not',
+            .join(', ')}). They combine with OR, so a second one can only widen what the ` +
+            'application sees. Restrictive policies are fine; a second permissive one is not',
         );
         continue;
       }
 
-      const policy = permissive[0]!;
+      // The auth_reader half (ADR 0054). Expected exactly on the tables the identity functions
+      // read, and refused everywhere else: a permissive policy for convert_auth on a table no
+      // function reads is a role seeing rows for no stated reason.
+      const wantsAuthReader = AUTH_READER_TABLES.has(name);
+      if (wantsAuthReader && forAuth.length !== 1) {
+        failures.push(
+          `${label}: ${forAuth.length} permissive policies apply to ${AUTH_ROLE}, expected exactly ` +
+            `one. The identity lookup functions run as that role and are subject to this table's ` +
+            'policies like anything else, so without it sign-in cannot find the account it was ' +
+            'asked for (ADR 0054)',
+        );
+      }
+      if (!wantsAuthReader && forAuth.length > 0) {
+        failures.push(
+          `${label}: ${forAuth.length} permissive policies apply to ${AUTH_ROLE} (${forAuth
+            .map((p) => p.polname)
+            .join(', ')}), but no function in AUTH_FUNCTIONS reads this table. Either the function ` +
+            'is missing from the registry or the policy should not exist',
+        );
+      }
+      if (wantsAuthReader && forAuth.length === 1) {
+        const reader = forAuth[0]!;
+        const readerRoles = [...reader.roles].sort();
+        if (readerRoles.length !== 1 || readerRoles[0] !== AUTH_ROLE) {
+          failures.push(
+            `${label}: policy ${reader.polname} applies to [${readerRoles.join(', ')}] rather than ` +
+              `exactly ${AUTH_ROLE}`,
+          );
+        }
+        if (reader.cmd !== 'r') {
+          failures.push(
+            `${label}: policy ${reader.polname} is not FOR SELECT. The lookup role reads; it has no ` +
+              'reason to write, and a wider command on a using(true) policy is a write nobody scoped',
+          );
+        }
+        if (reader.qual !== 'true') {
+          failures.push(
+            `${label}: policy ${reader.polname} is not the canonical auth_reader expression.
+` +
+              `      expected: true
+` +
+              `      actual:   ${reader.qual}`,
+          );
+        }
+      }
+
+      const policy = forApp[0]!;
       if (policy.cmd !== '*') {
         failures.push(
           `${label}: policy ${policy.polname} is not FOR ALL, so writes are governed by ` +
@@ -1045,7 +1310,7 @@ const main = async () => {
       from pg_class c
       join pg_namespace n on n.oid = c.relnamespace
       cross join unnest(array[
-        'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'
+        'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN'
       ]) as p(priv)
       where n.nspname = 'public'
         and c.relkind in ('r', 'p', 'v', 'm')
@@ -1062,10 +1327,22 @@ const main = async () => {
       for (const row of rows) {
         if ((FORBIDDEN_PRIVILEGES as readonly string[]).includes(row.privilege)) {
           if (row.on_table || row.on_column) {
+            // Named per privilege rather than listing all of them every time. Review twice found a
+            // correct verdict carrying an explanation that did not describe the case in hand, and
+            // adding MAINTAIN to this list made this message an example of it.
+            const because: Record<string, string> = {
+              TRUNCATE: 'TRUNCATE empties a table without visiting a row, so no policy filters it',
+              REFERENCES:
+                'REFERENCES lets a foreign key probe for the existence of rows a policy hides',
+              TRIGGER: 'TRIGGER runs code, and a policy is no defence against code',
+              MAINTAIN:
+                'MAINTAIN permits VACUUM, ANALYZE, REINDEX, CLUSTER and REFRESH MATERIALIZED ' +
+                'VIEW, none of which row-level security governs, and REFRESH recomputes stored rows',
+            };
             grantFailures.push(
-              `${label}: ${APP_ROLE} holds ${row.privilege}. Row-level security does not govern ` +
-                'it - TRUNCATE never visits a row, REFERENCES probes for rows a policy hides, ' +
-                'TRIGGER runs code - so the grant is the only control and it must not exist',
+              `${label}: ${APP_ROLE} holds ${row.privilege}. ` +
+                `${because[row.privilege] ?? 'Row-level security does not govern it'}, so the ` +
+                'grant is the only control and it must not exist',
             );
           }
           continue;
@@ -1120,6 +1397,102 @@ const main = async () => {
         );
       }
     }
+
+    // Who else holds anything, which the check above cannot see.
+    //
+    // Everything before this asks `has_table_privilege(convert_app, ...)` and whether PUBLIC holds
+    // something. Both are blind to a third role: `grant select on contact to some_role` passed every
+    // subcheck. That is not hypothetical - the identity read path needs exactly such a grant, and
+    // adding it left the gate reporting "3 tables hold exactly their declared privileges" while one
+    // of them had an undeclared grantee.
+    //
+    // So the grantee set is asserted whole: the owner, the application role with the privileges the
+    // registry declares, and `convert_auth` with SELECT on the tables AUTH_FUNCTIONS reads. Anything
+    // else is a boundary nobody wrote down.
+    const acl = await db.execute<{
+      relname: string;
+      grantee: string;
+      privilege: string;
+      grantable: boolean;
+      column_name: string | null;
+    }>(sql`
+      select c.relname,
+             case when acl.grantee = 0 then 'PUBLIC' else coalesce(r.rolname, '?') end as grantee,
+             acl.privilege_type as privilege,
+             acl.is_grantable as grantable,
+             null::text as column_name
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+      cross join lateral aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) as acl
+      left join pg_roles r on r.oid = acl.grantee
+      where n.nspname = 'public'
+        and c.relkind in ('r', 'p', 'v', 'm')
+        and acl.grantee <> c.relowner
+        and c.relname not in ('rls_probe', 'rls_expr_probe_workspace_rls', 'rls_expr_probe_user_rls')
+      union all
+      -- Column grants, for every grantee. The check further up catches a column grant held by the
+      -- application role; a column ACL belonging to any other role was invisible, and
+      -- information_schema.role_table_grants does not show them either. Review granted SELECT on a
+      -- single column of "user" to a third role and the whole gate stayed green.
+      select c.relname,
+             case when acl.grantee = 0 then 'PUBLIC' else coalesce(r.rolname, '?') end as grantee,
+             acl.privilege_type as privilege,
+             acl.is_grantable as grantable,
+             a.attname as column_name
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+      join pg_attribute a on a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped
+      cross join lateral aclexplode(a.attacl) as acl
+      left join pg_roles r on r.oid = acl.grantee
+      where n.nspname = 'public'
+        and c.relkind in ('r', 'p', 'v', 'm')
+        and acl.grantee <> c.relowner
+        and c.relname not in ('rls_probe', 'rls_expr_probe_workspace_rls', 'rls_expr_probe_user_rls')
+    `);
+
+    for (const table of tables) {
+      const access = entryFor(table);
+      if (!access) continue;
+      const name = table.relname;
+      const label = table.isPartition ? `${name} (partition of ${table.root})` : name;
+
+      const allowed = new Map<string, readonly string[]>([
+        [APP_ROLE, [...access.appPrivileges]],
+      ]);
+      if (AUTH_READER_TABLES.has(name)) allowed.set(AUTH_ROLE, ['SELECT']);
+
+      for (const row of acl.rows.filter((r) => r.relname === name)) {
+        const where = row.column_name === null ? '' : ` on column ${row.column_name}`;
+        if (row.column_name !== null) {
+          grantFailures.push(
+            `${label}: ${row.grantee} holds ${row.privilege}${where}. TABLE_ACCESS models table ` +
+              'privileges and nothing else, so a column grant is access the registry cannot ' +
+              'describe. Grant at table level or not at all',
+          );
+          continue;
+        }
+        if (row.grantable) {
+          grantFailures.push(
+            `${label}: ${row.grantee} holds ${row.privilege} WITH GRANT OPTION, so it can hand the ` +
+              'privilege to anyone and the registry stops describing who can read this table',
+          );
+        }
+        const permitted = allowed.get(row.grantee);
+        if (!permitted) {
+          grantFailures.push(
+            `${label}: ${row.grantee} holds ${row.privilege}, and the registry names no such ` +
+              'grantee. A grant to a role TABLE_ACCESS does not mention is access nobody declared',
+          );
+          continue;
+        }
+        if (!permitted.includes(row.privilege)) {
+          grantFailures.push(
+            `${label}: ${row.grantee} holds ${row.privilege}, beyond the ` +
+              `[${permitted.join(', ')}] the registry allows it`,
+          );
+        }
+      }
+    }
   }
 
   subchecks.push({
@@ -1153,7 +1526,7 @@ const main = async () => {
     appCanExecute: boolean;
     searchPath: string | null;
   }>(sql`
-    select p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' as routine,
+    select n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' as routine,
            o.rolname as owner,
            (o.rolsuper or o.rolbypassrls) as "canBypass",
            has_function_privilege(${APP_ROLE}, p.oid, 'EXECUTE') as "appCanExecute",
@@ -1168,10 +1541,61 @@ const main = async () => {
     from pg_proc p
     join pg_namespace n on n.oid = p.pronamespace
     join pg_roles o on o.oid = p.proowner
-    where n.nspname = 'public' and p.prosecdef
+    where p.prosecdef
   `);
 
+  // Owners of policed tables, for the check below. A SECURITY DEFINER routine executes with its
+  // owner's privileges, and only an owner may enable or disable row-level security or alter a
+  // policy. So a routine owned by a table's owner delegates owner-only DDL to whoever can execute
+  // it, and FORCE does not touch that: review created exactly such a function, granted EXECUTE to
+  // the application alone, and disabled RLS on `user` while this subcheck reported every routine
+  // safe because its owner did not *bypass* policies.
+  const policedOwners = new Set(policed.map((table) => table.owner));
+
+  // Effective ownership, not the same role OID. Review granted a policed table's owner to a second
+  // role WITH INHERIT TRUE, owned the definer routine with that second role, and ran
+  // `alter table ... disable row level security` from inside it while this subcheck reported every
+  // routine safe. A routine executes with its owner's privileges, and those privileges include
+  // whatever the owner inherits.
+  const definerOwners = [...new Set(definers.rows.map((r) => r.owner))];
+  const inheritsOwner = new Map<string, string>();
+  if (definerOwners.length > 0 && policedOwners.size > 0) {
+    const inherited = await db.execute<{ routine_owner: string; table_owner: string }>(sql`
+      select r.rolname as routine_owner, o.rolname as table_owner
+      from pg_roles r
+      cross join pg_roles o
+      where r.rolname = any(${sql.raw(
+        `array[${definerOwners.map((o) => `'${o.replace(/'/g, "''")}'`).join(', ')}]::name[]`,
+      )})
+        and o.rolname = any(${sql.raw(
+          `array[${[...policedOwners].map((o) => `'${o.replace(/'/g, "''")}'`).join(', ')}]::name[]`,
+        )})
+        and r.rolname <> o.rolname
+        and pg_has_role(r.oid, o.oid, 'USAGE')
+    `);
+    for (const row of inherited.rows) inheritsOwner.set(row.routine_owner, row.table_owner);
+  }
+
   for (const routine of definers.rows) {
+    const inherited = inheritsOwner.get(routine.owner);
+    if (inherited !== undefined && !routine.canBypass) {
+      definerFailures.push(
+        `${routine.routine}: is SECURITY DEFINER and owned by ${routine.owner}, which inherits ` +
+          `${inherited}, the owner of a policed table. A routine runs with its owner's privileges, ` +
+          'and those include inherited ones, so this delegates owner-only DDL without the routine ' +
+          'owner appearing to own anything',
+      );
+    }
+    if (policedOwners.has(routine.owner) && !routine.canBypass) {
+      definerFailures.push(
+        `${routine.routine}: is SECURITY DEFINER and owned by ${routine.owner}, which owns a table ` +
+          'that needs a policy. An owner may run ALTER TABLE DISABLE ROW LEVEL SECURITY and may ' +
+          'alter policies, and a definer routine executes with its owner privileges, so this ' +
+          'routine delegates owner-only authority to whoever can execute it. FORCE does not ' +
+          'prevent it. Own it with a role that owns no policed table (ADR 0052, ADR 0054)',
+      );
+    }
+
     // No `appCanExecute` condition. Asking whether the application can execute *this* routine is
     // the narrow version of the question, and review beat it with two hops: an inner definer owned
     // by the bypassing owner with EXECUTE revoked, called by an outer definer owned by an ordinary
@@ -1225,6 +1649,209 @@ const main = async () => {
       definers.rows.length > 0
         ? `${definers.rows.length} SECURITY DEFINER routine(s) are owned by a non-bypassing role or unreachable from ${APP_ROLE}`
         : 'there are no SECURITY DEFINER routines in public, so there was nothing to check',
+  });
+
+  // ---- 9b. the identity functions match their registry, in both directions. -------------------
+  //
+  // AUTH_FUNCTIONS described itself as a registry the gate compares against and nothing imported
+  // it, so review passed three mutations through a green gate. The first version of this subcheck
+  // fixed that and matched on the bare function *name*, which review then walked through twice: a
+  // registered name with a different argument signature passed, and an extra overload owned by
+  // convert_auth passed while the verdict counted three matches against a two-entry registry. An
+  // overload is a fully executable read path holding the identity role's visibility.
+  //
+  // So the key is (schema, name, argument types), exactly one match is required per entry, and
+  // anything convert_auth owns in *any* schema and of any routine kind has to be registered. The
+  // earlier version filtered to `public`, and a lookalike one schema over was invisible.
+  const identityFailures: string[] = [];
+
+  const authRole = await db.execute<{
+    rolcanlogin: boolean;
+    rolsuper: boolean;
+    rolbypassrls: boolean;
+  }>(sql`
+    select rolcanlogin, rolsuper, rolbypassrls from pg_roles where rolname = ${AUTH_ROLE}
+  `);
+  const registered = Object.entries(AUTH_FUNCTIONS);
+  const authRoleRow = authRole.rows[0];
+
+  if (!authRoleRow && registered.length > 0) {
+    identityFailures.push(
+      `${AUTH_ROLE} does not exist, but AUTH_FUNCTIONS registers ${registered.length} function(s) ` +
+        'that must be owned by it',
+    );
+  }
+  if (authRoleRow) {
+    if (authRoleRow.rolcanlogin) {
+      identityFailures.push(
+        `${AUTH_ROLE} has LOGIN. Nothing connects as it - the application reaches identity data ` +
+          'through EXECUTE - so a login is a credential that exists to be leaked (ADR 0054)',
+      );
+    }
+    if (authRoleRow.rolsuper || authRoleRow.rolbypassrls) {
+      identityFailures.push(
+        `${AUTH_ROLE} is superuser or holds BYPASSRLS, which makes every routine it owns a hole ` +
+          'and would put them in the class this gate refuses (ADR 0052)',
+      );
+    }
+  }
+
+  const registeredNames = registered.map(([name]) => name);
+  const routines = await db.execute<{
+    schema: string;
+    name: string;
+    args: string;
+    kind: string;
+    owner: string;
+    definer: boolean;
+    volatility: string;
+    config: string[] | null;
+    result: string;
+    acl: string[];
+  }>(sql`
+    select n.nspname as schema,
+           p.proname as name,
+           coalesce(oidvectortypes(p.proargtypes), '') as args,
+           p.prokind as kind,
+           pg_get_userbyid(p.proowner) as owner,
+           p.prosecdef as definer,
+           p.provolatile as volatility,
+           p.proconfig as config,
+           coalesce(pg_get_function_result(p.oid), '') as result,
+           coalesce((
+             select array_agg(
+               (case when a.grantee = 0 then 'PUBLIC' else pg_get_userbyid(a.grantee) end)
+               || ':' || a.privilege_type
+               || case when a.is_grantable then ':GRANTABLE' else '' end
+             )
+             from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) as a
+             where a.grantee <> p.proowner
+           ), '{}')::text[] as acl
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where pg_get_userbyid(p.proowner) = ${AUTH_ROLE}
+       or (n.nspname = 'public' and p.proname = any(${sql.raw(
+         registeredNames.length > 0
+           ? `array[${registeredNames.map((n) => `'${n}'`).join(', ')}]::name[]`
+           : `array[]::name[]`,
+       )}))
+  `);
+
+  const signature = (r: { schema: string; name: string; args: string }) =>
+    `${r.schema}.${r.name}(${r.args})`;
+  const matched = new Set<string>();
+
+  for (const [name, spec] of registered) {
+    const wanted = `public.${name}(${spec.args.join(', ')})`;
+    const candidates = routines.rows.filter((r) => signature(r) === wanted && r.kind === 'f');
+    if (candidates.length === 0) {
+      if (inDatabase.size > 0) {
+        const sameName = routines.rows.filter((r) => r.name === name).map(signature);
+        identityFailures.push(
+          `no function ${wanted} exists. AUTH_FUNCTIONS registers it by schema, name and argument ` +
+            'types, so a different signature is a different function' +
+            (sameName.length > 0 ? `. Found instead: ${sameName.join(', ')}` : ''),
+        );
+      }
+      continue;
+    }
+    if (candidates.length > 1) {
+      identityFailures.push(
+        `${wanted} resolves to ${candidates.length} routines, which is ambiguous. Exactly one ` +
+          'function must match each registry key',
+      );
+    }
+    const found = candidates[0]!;
+    matched.add(signature(found));
+
+    if (found.owner !== AUTH_ROLE) {
+      identityFailures.push(
+        `${wanted} is owned by ${found.owner} rather than ${AUTH_ROLE}. A definer routine owned by ` +
+          'the migration owner bypasses row-level security, which is the shape ADR 0052 refuses',
+      );
+    }
+    if (!found.definer) {
+      identityFailures.push(
+        `${wanted} is not SECURITY DEFINER, so it runs as the caller and cannot see the row it was ` +
+          'asked for. It would also vanish from the definer subcheck, which only reads prosecdef',
+      );
+    }
+    if (found.volatility !== 's') {
+      identityFailures.push(
+        `${wanted} is volatility '${found.volatility}' rather than STABLE. A read-only lookup is ` +
+          'stable; anything else either forbids planner reuse or claims an immutability it lacks',
+      );
+    }
+    // Compared exactly, not merely for presence. Review set `search_path = pg_catalog, pg_temp` and
+    // the check passed while the registry documents an empty path, so the subcheck was claiming a
+    // comparison it was not making.
+    const path = (found.config ?? []).find((entry) => entry.startsWith('search_path='));
+    if (path !== 'search_path=""') {
+      identityFailures.push(
+        `${wanted} has ${path ?? 'no search_path set'} where an empty search_path is required. ` +
+          'Every name inside is schema-qualified on that assumption, and a non-empty path is a ' +
+          'different resolution order than the one that was reviewed',
+      );
+    }
+
+    const returned = found.result
+      .replace(/^TABLE\(/i, '')
+      .replace(/\)$/, '')
+      .split(',')
+      .map((column) => column.trim().split(/\s+/)[0])
+      .filter((column): column is string => column !== undefined && column.length > 0);
+    const declared = [...spec.returns].sort().join(', ');
+    if (returned.sort().join(', ') !== declared) {
+      identityFailures.push(
+        `${wanted} returns [${returned.join(', ')}] where AUTH_FUNCTIONS declares [${declared}]. ` +
+          'Widening or narrowing a lookup is a change to the registry first, because a function ' +
+          'returning more than it declares rebuilds the leak inside itself where no gate can see it',
+      );
+    }
+
+    // Set equality, both directions. The earlier version rejected unexpected entries and never
+    // required the expected one, so revoking EXECUTE from the application left the gate green while
+    // the integration suite failed with `permission denied for function`.
+    const acl = [...found.acl].sort().join(', ');
+    const wantedAcl = `${APP_ROLE}:EXECUTE`;
+    if (acl !== wantedAcl) {
+      identityFailures.push(
+        `${wanted} grants [${acl || 'nothing'}] where exactly [${wantedAcl}] is required. EXECUTE ` +
+          'defaults to PUBLIC on a new function, so the migration revokes it and grants the ' +
+          'application alone, with no grant option',
+      );
+    }
+  }
+
+  for (const routine of routines.rows) {
+    // Two rules, not one. Anything convert_auth owns anywhere must be registered, and any routine
+    // in `public` wearing a registered *name* must be registered too, whoever owns it. The previous
+    // version applied only the first, so review created `auth_find_user_by_phone(integer)` owned by
+    // the migration owner: the query loaded it, the check ignored it, and the verdict still claimed
+    // an exact registry match while an unreviewed callable sat under an authentication name.
+    const unregisteredName =
+      routine.schema === 'public' && registeredNames.includes(routine.name);
+    if ((routine.owner === AUTH_ROLE || unregisteredName) && !matched.has(signature(routine))) {
+      identityFailures.push(
+        `${signature(routine)} is owned by ${routine.owner} and is not a registered lookup. ` +
+          `${AUTH_ROLE} exists to own exactly the surface AUTH_FUNCTIONS names, and a routine in ` +
+          'public wearing a registered name is a read path nobody declared whoever owns it. An ' +
+          'overload, a procedure, or a function in another schema all count',
+      );
+    }
+  }
+
+  subchecks.push({
+    name: 'identity functions',
+    failures: identityFailures,
+    // Real once a migrated schema exists, because that is when the registry's functions are meant
+    // to. Keying this off how many routines were *found* let a database with every function missing
+    // report `waiting` while accumulating failures.
+    status: inDatabase.size > 0 ? 'real' : 'waiting',
+    verdict:
+      inDatabase.size > 0
+        ? `${matched.size} of ${registered.length} registered function(s) matched on schema, name, argument types, owner, definer, volatility, search_path, result columns and exact ACL`
+        : 'no migrated schema yet, so the registry had nothing to compare against',
   });
 
   // ---- 10. does isolation actually hold? Behavioural, on a fixture table. --------------------
@@ -1343,6 +1970,108 @@ const main = async () => {
     verdict:
       'a cross-tenant read returned nothing, an empty context returned nothing, and the owner ' +
       'saw both rows',
+  });
+
+  // ---- 12. the schema boundary this whole file assumes. ---------------------------------------
+  //
+  // Every relation, policy, dependency and ACL query above filters `nspname = 'public'`. That was an
+  // unstated assumption until review exploited it: a plain owner-context view in another schema over
+  // `public."user"`, granted to the application, returned every account while the gate reported
+  // `0 view(s)` and 11 of 11 real. The inventory was not wrong about what it inventoried; it was
+  // silent about everywhere else.
+  //
+  // Widening eight queries to every schema is the larger fix and the wrong one for this system,
+  // which has exactly one application schema by design. So the boundary is asserted instead: outside
+  // the system schemas there may be `public`, which is inventoried, and `drizzle`, which holds the
+  // migration journal and which the application cannot reach. Anything else fails, because a
+  // relation there is unpoliced by construction rather than by mistake.
+  //
+  // If a second application schema is ever wanted, this subcheck is the thing that must change, and
+  // changing it means schema-qualifying the identities in the registry and every query above.
+  const boundaryFailures: string[] = [];
+  const schemas = await db.execute<{
+    nspname: string;
+    owner: string;
+    app_usage: boolean;
+    app_create: boolean;
+  }>(sql`
+    select n.nspname,
+           pg_get_userbyid(n.nspowner) as owner,
+           has_schema_privilege(${APP_ROLE}, n.oid, 'USAGE') as app_usage,
+           has_schema_privilege(${APP_ROLE}, n.oid, 'CREATE') as app_create
+    from pg_namespace n
+    where n.nspname <> 'information_schema'
+      and n.nspname not like 'pg\\_%'
+  `);
+
+  for (const schema of schemas.rows) {
+    if (schema.nspname === 'public') {
+      if (schema.app_create) {
+        boundaryFailures.push(
+          `public: ${APP_ROLE} holds CREATE, so it can add a relation that never appears in ` +
+            'TABLE_ACCESS and never acquires a policy. bootstrap.sql revokes this; the revocation ' +
+            'is asserted here rather than assumed to have run',
+        );
+      }
+      continue;
+    }
+    if (schema.nspname === 'drizzle') {
+      // The migration journal. Allowed because the application cannot reach it, which is the part
+      // worth checking rather than the part worth assuming.
+      if (schema.app_usage || schema.app_create) {
+        boundaryFailures.push(
+          `drizzle: ${APP_ROLE} holds ${schema.app_create ? 'CREATE' : 'USAGE'} on the migration ` +
+            'journal schema. Nothing in the application reads it, and a relation it can reach ' +
+            'there is outside every check in this file',
+        );
+      }
+      continue;
+    }
+    boundaryFailures.push(
+      `${schema.nspname}: is a schema outside public, owned by ${schema.owner}. Every relation, ` +
+        'policy and privilege check in this gate reads public alone, so a table, view or ' +
+        'materialized view here carries no policy anyone verified. Review read every account ' +
+        'through exactly this shape. Drop it, or schema-qualify the registry and widen every ' +
+        'query, which is a change to ADR 0050',
+    );
+  }
+
+  // Two database-level privileges the same reasoning applies to. TEMP is load-bearing: a temporary
+  // schema sits ahead of public in the effective search path, which is how an unqualified name in a
+  // definer routine gets shadowed. bootstrap.sql revokes it from PUBLIC, and review showed that
+  // granting it back left the gate green.
+  const dbPrivileges = await db.execute<{
+    app_temp: boolean;
+    public_temp: boolean;
+    app_createdb: boolean;
+  }>(sql`
+    select has_database_privilege(${APP_ROLE}, current_database(), 'TEMP') as app_temp,
+           has_database_privilege('public', current_database(), 'TEMP') as public_temp,
+           (select rolcreatedb from pg_roles where rolname = ${APP_ROLE}) as app_createdb
+  `);
+  const dbPriv = dbPrivileges.rows[0];
+  if (dbPriv?.public_temp || dbPriv?.app_temp) {
+    boundaryFailures.push(
+      `TEMP on the database is granted to ${dbPriv.public_temp ? 'PUBLIC' : APP_ROLE}. A temporary ` +
+        'schema is searched ahead of public, so an unqualified name inside a SECURITY DEFINER ' +
+        'routine can resolve to a temp relation the application created. Every approved routine ' +
+        'qualifies its names, and removing the capability is the belt to that brace',
+    );
+  }
+  if (dbPriv?.app_createdb) {
+    boundaryFailures.push(
+      `${APP_ROLE} holds CREATEDB. It confers nothing over objects in this database, and it is ` +
+        'still authority the application has no use for',
+    );
+  }
+
+  subchecks.push({
+    name: 'schema boundary',
+    failures: boundaryFailures,
+    status: 'real',
+    verdict:
+      `${schemas.rows.length} non-system schema(s) present, none reachable by ${APP_ROLE} except ` +
+      'public, which is the one this gate inventories; TEMP withheld and no CREATE on public',
   });
 
   // ---- report ------------------------------------------------------------------------------

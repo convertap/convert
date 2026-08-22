@@ -32,10 +32,34 @@ export type TablePrivilege = 'SELECT' | 'INSERT' | 'UPDATE' | 'DELETE';
  * The first version of this gate checked these on `role-grants` tables only - that is, on every
  * class except the two that hold tenant data. `grant truncate on contact to convert_app` passed.
  */
-export const FORBIDDEN_PRIVILEGES = ['TRUNCATE', 'REFERENCES', 'TRIGGER'] as const;
+export const FORBIDDEN_PRIVILEGES = [
+  'TRUNCATE',
+  'REFERENCES',
+  'TRIGGER',
+  // MAINTAIN arrived in Postgres 17 and was missing from this list until review enumerated the
+  // privilege set from the documentation rather than from memory. It permits VACUUM, ANALYZE,
+  // REINDEX, CLUSTER and REFRESH MATERIALIZED VIEW on a table, none of which row-level security
+  // governs, and REFRESH in particular recomputes stored rows.
+  'MAINTAIN',
+] as const;
 
 /** The role the application connects as (ADR 0042). Policies name it; nothing names PUBLIC. */
 export const APP_ROLE = 'convert_app';
+
+/**
+ * The role that owns the identity read path (ADR 0054).
+ *
+ * It exists because sign-in has to find an account before any principal exists, so there is nothing
+ * for a policy to scope against. `convert_auth` owns `SECURITY DEFINER` functions that answer one
+ * question each; `convert_app` gets `EXECUTE` and nothing else, so the unauthenticated path never
+ * holds a relation it can query further.
+ *
+ * It is `nobypassrls` on purpose. G7 refuses a definer routine owned by a role that can bypass
+ * row-level security, because such a routine is a hole with `EXECUTE` defaulting to `PUBLIC`. That
+ * refusal is why this role is subject to policies like any other, and why `user` needs a policy per
+ * role rather than one per table.
+ */
+export const AUTH_ROLE = 'convert_auth';
 
 /** The tenant table, and the column a tenant-scoped foreign key points at (ADR 0030). */
 export const TENANT_TABLE = 'workspace';
@@ -140,6 +164,28 @@ export const scopePredicate = (scopeColumn: string, guc: string): string => {
 };
 
 /**
+ * Quote a relation name for DDL, accepting an optional `public.` prefix.
+ *
+ * The name is quoted rather than interpolated bare because **`user` is a reserved word**: bare
+ * `create policy x on user` is a syntax error, since unquoted `user` is the keyword that means
+ * `current_user`. Quoting every name costs nothing for the tables that do not need it and removes a
+ * class of mistake for the one that does. The bare-identifier guard still runs on the unqualified
+ * name, so nothing arbitrary reaches DDL.
+ *
+ * A forgotten quote elsewhere fails loudly rather than quietly, which is the one mercy of this
+ * particular keyword: `select * from user` is a syntax error, not a query that returns the wrong
+ * rows.
+ */
+const quoteRelation = (table: string): string => {
+  const qualified = table.startsWith('public.');
+  const bare = qualified ? table.slice('public.'.length) : table;
+  if (!IDENTIFIER.test(bare)) {
+    throw new Error(`table ${JSON.stringify(table)} is not a bare SQL identifier`);
+  }
+  return qualified ? `public."${bare}"` : `"${bare}"`;
+};
+
+/**
  * The whole policy, as a migration must reproduce it. One permissive `FOR ALL` policy per table,
  * granted to the application role by name. `WITH CHECK` is deliberately omitted: on an `ALL` policy
  * Postgres uses the `USING` expression for both visible rows and newly added ones, so omitting it
@@ -153,16 +199,43 @@ export const canonicalPolicySql = (
   kind: keyof typeof SCOPE_GUC,
   scopeColumn: string,
 ): string => {
-  if (!IDENTIFIER.test(table.replace(/^public\./, ''))) {
-    throw new Error(`table ${JSON.stringify(table)} is not a bare SQL identifier`);
-  }
   return [
     `create policy ${kind === 'workspace-rls' ? 'workspace_scope' : 'user_scope'}`,
-    `  on ${table}`,
+    `  on ${quoteRelation(table)}`,
     '  as permissive',
     '  for all',
     `  to ${APP_ROLE}`,
     `  using (${scopePredicate(scopeColumn, SCOPE_GUC[kind])})`,
+  ].join('\n');
+};
+
+/**
+ * The second policy a `user-rls` table carries, for the role that owns the lookup functions
+ * (ADR 0054).
+ *
+ * `convert_auth` is deliberately non-bypassing, so it is subject to this table's policies like any
+ * other role. Without this policy the sign-in function would be blind: it runs as `convert_auth`,
+ * and inside it `app.current_user` still holds whatever the caller set, so a self-scoped policy
+ * would hide the very account it was asked to find.
+ *
+ * `using (true)` looks alarming and is not. Nothing connects as `convert_auth`; the only things that
+ * run as it are the functions it owns, and each of those constrains its own result to one row. What
+ * makes this safe is that the role has no login path the application can reach, which G7 asserts by
+ * refusing any chain of membership from `convert_app` to here.
+ *
+ * Permissive policies combine with `OR`, so a second policy can only widen visibility. That holds
+ * for two policies applicable to the *same* role, and these are not: a policy declared
+ * `TO convert_auth` never enters the `OR` when `convert_app` is the current role. The rule with
+ * force is one permissive policy per table and role.
+ */
+export const authReaderPolicySql = (table: string): string => {
+  return [
+    'create policy auth_reader',
+    `  on ${quoteRelation(table)}`,
+    '  as permissive',
+    '  for select',
+    `  to ${AUTH_ROLE}`,
+    '  using (true)',
   ].join('\n');
 };
 
@@ -180,7 +253,49 @@ export const canonicalPolicySql = (
  * policy on it, and adding one later is an ALTER against populated data.
  */
 export const TABLE_ACCESS = {
-  workspace: { kind: 'workspace-rls', scopeColumn: 'id', appPrivileges: [] },
+  /**
+   * `SELECT` since migration one (ADR 0054). It held no privileges while nothing read it, and the
+   * map recorded "how a workspace is discovered through membership" as unresolved on the reasoning
+   * that a table-wide `SELECT` here would hand the application every tenant. It would not: this
+   * table is `workspace-rls` scoped by its own `id`, so the grant reaches exactly the row
+   * `app.current_workspace` names. Membership answers *which* workspace, and the policy answers
+   * whether the application may read it.
+   *
+   * `UPDATE` because a workspace can be renamed, which is also why the table carries
+   * `updated_at`. ADR 0046 ties the two together, and `assert:conventions` caught the mismatch
+   * when this entry held `SELECT` alone. Who may rename it is a role question the application
+   * answers; the policy's job is confining the statement to this tenant's own row.
+   */
+  workspace: { kind: 'workspace-rls', scopeColumn: 'id', appPrivileges: ['SELECT', 'UPDATE'] },
+
+  /**
+   * Scoped by the caller, not by the tenant. A person reading their own account is `user-rls`; a
+   * person reading *other* people's names is the workspace member list, which this policy forbids by
+   * design and a definer function serves instead (ADR 0054).
+   *
+   * `UPDATE` is granted so a person can edit their own profile, which the self-scoped policy limits
+   * to their own row. It is also why this table carries `updated_at`: ADR 0046 requires that column
+   * if and only if the application may `UPDATE`, and `assert:conventions` fails either mismatch.
+   *
+   * The second policy this table carries, for `convert_auth`, is not expressible here. The registry
+   * says how the *application* is held; `authReaderPolicySql` says what the lookup role gets, and
+   * G7 asserts both.
+   */
+  user: { kind: 'user-rls', scopeColumn: 'id', appPrivileges: ['SELECT', 'UPDATE'] },
+
+  /**
+   * The join that makes a workspace reachable at all. Tenant-scoped, so a member row is visible only
+   * inside the workspace it belongs to.
+   *
+   * No `DELETE`: removing somebody is `deactivated_at`, a reversible domain state with rules (I7),
+   * deliberately not a tombstone (ADR 0046). `UPDATE` is what sets it, so `updated_at` belongs here
+   * too.
+   */
+  workspace_member: {
+    kind: 'workspace-rls',
+    scopeColumn: 'workspace_id',
+    appPrivileges: ['SELECT', 'INSERT', 'UPDATE'],
+  },
 } as const satisfies Record<string, TableAccess>;
 
 /**
@@ -199,10 +314,50 @@ export const TABLE_ACCESS = {
  * decision.
  */
 export const TABLE_ACCESS_BLOCKERS = {
-  user: 'Read path unresolved: a grant cannot scope rows, and sign-in looks a user up before any principal exists. See CV-19 and ADR 0050.',
   verification_attempt:
-    'Read path unresolved: ADR 0047 assumed a grant could restrict reads to the identifier presented, which Postgres grants cannot do. See CV-19 and ADR 0050.',
+    'Mechanism decided but not built: ADR 0054 gives this table the same definer-function path as `user`, owned by convert_auth, with no table privilege for the application. It lands with the auth module, which is what writes to it. Declaring it before then would remove the blocker with nothing behind it.',
 } as const;
+
+/**
+ * The `SECURITY DEFINER` functions `convert_auth` owns, and what each may return (ADR 0054).
+ *
+ * A registry rather than a convention, for the reason `TABLE_ACCESS` is one: the column list is part
+ * of the decision. A function that returns a whole row rebuilds inside itself the leak the role
+ * exists to prevent, and no gate can see that from the outside. G7 compares each function's declared
+ * return columns against this list, so widening one is a change to this file that a reviewer sees.
+ *
+ * `search_path` is empty on every one of them and every name inside is schema-qualified. Both halves
+ * matter: an empty `search_path` removes the caller's ordinary schemas but Postgres still searches an
+ * existing temporary schema for relation names, which is how review shadowed a table called
+ * `workspace` with a temporary one. Qualifying every name is what closes it, and bootstrap revoking
+ * TEMP from PUBLIC is the belt to that brace.
+ */
+export const AUTH_FUNCTIONS = {
+  auth_find_user_by_phone: {
+    table: 'user',
+    args: ['text'],
+    returns: ['id', 'phone'],
+    reason:
+      'Sign-in by phone. Runs before any principal exists, so it returns one row or none rather than a relation the caller keeps.',
+  },
+  auth_find_user_by_email: {
+    table: 'user',
+    args: ['text'],
+    returns: ['id', 'email'],
+    reason: 'Sign-in by email. A1 allows either identifier, so both paths need one function each.',
+  },
+} as const;
+
+/**
+ * The tables that carry an `auth_reader` policy, derived from the functions that read them.
+ *
+ * Derived rather than listed, so adding a function for a new table cannot leave the policy behind.
+ * The reverse also holds and G7 asserts it: an `auth_reader` policy on a table no function reads is
+ * a permissive policy for a role with no reason to see it.
+ */
+export const AUTH_READER_TABLES: ReadonlySet<string> = new Set(
+  Object.values(AUTH_FUNCTIONS).map((f) => f.table),
+);
 
 /**
  * Relation kinds `TABLE_ACCESS` can describe. Anything else in `public` fails the build.
